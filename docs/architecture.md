@@ -409,4 +409,8 @@ El paquete se construye con `cargo-deb` y pasa una puerta de empaquetado que val
 3. Definir la política exacta de notificaciones del escritorio.
 4. Confirmar el catálogo inicial de 13 presets y sus nombres localizados.
 
-La matriz de paridad y el estado de cada función están en [`parity.md`](parity.md).
+## 21. ADRs y backlog
+
+Las decisiones estructurales están registradas en [`adr/`](adr/) y el trabajo se desglosa en [`backlog.md`](backlog.md). La matriz de paridad y el estado de cada función están en [`parity.md`](parity.md).
+
+Los ADRs aceptados son normativos; cualquier cambio de decisión requiere uno nuevo que lo reemplace.

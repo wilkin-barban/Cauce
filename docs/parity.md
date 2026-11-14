@@ -4,6 +4,8 @@
 **Referencia:** FF-Converter `v1.1.1`  
 **Objetivo:** que ninguna función del producto actual se pierda por olvido y que el MVP tenga límites explícitos.
 
+**Planificación detallada:** [`backlog.md`](backlog.md) · **Decisiones:** [`adr/`](adr/)
+
 ## Leyenda
 
 | Estado | Significado |
