@@ -4,3 +4,4 @@ pub mod events;
 pub mod ids;
 pub mod protocol;
 pub mod socket;
+pub mod dispatch;
