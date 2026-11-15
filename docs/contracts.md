@@ -84,7 +84,7 @@ Campos comunes: `id`, `name_es`, `name_en`, `description_es`, `description_en`, 
 
 ### 2.6 `Settings`
 
-`output_dir`, `max_concurrent_jobs` (1–8), `theme` (`system`/`light`/`dark`), `language` (`es`/`en`), `notifications` (default `false`), `duplicate_policy` (`suffix`/`skip`/`overwrite`), `keep_temp_on_failure`.
+`output_dir`, `max_concurrent_jobs` (1–8), `theme` (`system`/`light`/`dark`), `language` (`es`/`en`/`pt-BR`), `notifications` (default `false`), `duplicate_policy` (`suffix`/`skip`/`overwrite`), `keep_temp_on_failure`.
 
 ## 3. Invariantes
 

@@ -2,13 +2,13 @@
 
 **Estado:** normativo para v0.1  
 **Origen:** catálogo de FF-Converter `v1.1.1`, adaptado a Cauce y a CPU en el MVP.  
-**Nombres ES/EN:** ratificados para v0.1; PT-BR en v0.2.  
+**Nombres ES/EN/PT-BR:** ratificados para v0.1.  
 **Relacionado:** [`contracts.md`](contracts.md), [`parity.md`](parity.md)
 
 ## Reglas del catálogo
 
 - Los presets del sistema son inmutables y se identifican por `id`.
-- Los nombres se localizan en ES/EN; PT-BR llega en v0.2.
+- Los nombres se localizan en ES/EN/PT-BR desde v0.1; PT-BR usa portugués de Brasil.
 - En v0.1 todos los presets se resuelven a codificadores CPU. Las preferencias GPU se conservan como metadatos para v0.3.
 - Un preset de audio declara `video_codec: none` y elimina el video.
 - `video_quality` se interpreta como CRF para CPU (`libx264`, `libx265`, `libsvtav1`, `libvpx-vp9`).
@@ -34,6 +34,24 @@
 | `system-android-tv` | Android TV / Google TV | `mkv` | `h265` | `aac` | 3840×2160, 60 fps | CRF 23, audio 256k | 10-bit, HDR preservado, subtítulos preservados |
 | `system-audio-alac` | Extraer Audio — ALAC / Extract Audio — ALAC | `m4a` | `none` | `alac` | — | Lossless | Conserva metadatos; sin video |
 | `system-audio-wav` | Extraer Audio — WAV PCM / Extract Audio — WAV PCM | `wav` | `none` | `pcm_s16le` | — | PCM 16-bit | Conserva metadatos; sin video |
+
+## Nombres PT-BR
+
+| ID | Nome em português (Brasil) |
+|---|---|
+| `system-smarttv-compat` | Smart TV — Compatibilidade Máxima |
+| `system-smarttv-hevc` | Smart TV — Qualidade Eficiente |
+| `system-youtube-social` | YouTube e Redes Sociais |
+| `system-archival-master` | Arquivo / Qualidade Máxima |
+| `system-fast-compress` | Compressão Rápida |
+| `system-audio-mp3` | Extrair Áudio — MP3 320k |
+| `system-audio-flac` | Extrair Áudio — FLAC |
+| `system-apple-music-export` | Exportação Apple Music |
+| `system-samsung-tv` | Samsung TV — 4K |
+| `system-lg-tv` | LG TV — HEVC 4K |
+| `system-android-tv` | Android TV / Google TV |
+| `system-audio-alac` | Extrair Áudio — ALAC |
+| `system-audio-wav` | Extrair Áudio — WAV PCM |
 
 ## Campos completos
 

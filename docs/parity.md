@@ -47,14 +47,14 @@
 | Logs | Niveles, filtros, búsqueda, persistencia | **Parcial**: básico | **MVP** | **MVP** | Rotación, filtros y exportación sin rutas sensibles |
 | Notificaciones | Completado/fallido | **MVP**: opcional | **MVP** | **MVP** | Desactivadas por defecto; el daemon emite una sola notificación terminal con el nombre base |
 | Tema | Claro/oscuro/sistema | **MVP** | **MVP** | **MVP** | Sigue el tema del sistema y permite override |
-| Idiomas | ES/EN | **MVP**: ES/EN | **MVP** | **MVP**: ES/EN/PT-BR | Cambio en vivo sin reiniciar |
+| Idiomas | ES/EN | **MVP**: ES/EN/PT-BR | **MVP**: ES/EN/PT-BR | **MVP**: ES/EN/PT-BR | Cambio en vivo sin reiniciar; claves completas y fallback |
 | Actualizaciones | Auto-update Electron | **Fuera del MVP** | **Posterior** | **Posterior** | En `.deb`, abrir la página oficial de releases; no auto-update silencioso |
 | Windows/macOS | Sí | **Fuera** | **Fuera** | **Fuera** | Cauce es Ubuntu-native; no hay binarios para otros SO |
 | FFmpeg embebido | Sí | **Fuera** | **Fuera** | **Fuera** | Cauce usa `ffmpeg` del sistema; se declara como dependencia |
 
 ## Catálogo inicial de presets
 
-Los 13 presets del sistema se portan al MVP con sus identificadores estables. Los nombres visibles se localizan en ES/EN; la traducción PT-BR llega en v0.2.
+Los 13 presets del sistema se portan al MVP con sus identificadores estables. Los nombres visibles se localizan en **ES/EN/PT-BR desde v0.1**.
 
 | ID | Preset | Salida | v0.1 |
 |---|---|---|---|
@@ -103,7 +103,7 @@ La paridad de hardware significa **detectar y usar lo que el equipo permita**, c
 - Historial visual y detalle de transiciones.
 - Presets personalizados.
 - Logs persistentes con filtros y exportación.
-- Mejoras de accesibilidad y localización PT-BR.
+- Mejoras de accesibilidad y revisión de traducciones ES/EN/PT-BR.
 
 ### v0.3 — Calidad y aceleración
 

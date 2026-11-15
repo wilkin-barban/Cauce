@@ -129,7 +129,7 @@ Si FFmpeg falta, la página explica la instalación y no permite iniciar trabajo
 | Carpeta de salida | Sí |
 | Concurrencia (1–8) | Sí; por defecto 1 |
 | Tema | Sistema/claro/oscuro |
-| Idioma | ES/EN |
+| Idioma | ES/EN/PT-BR |
 | Notificaciones | Sí, por defecto desactivadas |
 | Política de duplicados | Suffix por defecto |
 | Conservar temporal al fallar | No por defecto |

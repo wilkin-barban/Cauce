@@ -43,7 +43,8 @@ C-033 systemd
 C-040 GUI shell
    ├── C-041 Convertir
    ├── C-042 Cola
-   └── C-043 Presets/Diagnóstico/Ajustes
+   ├── C-043 Presets/Diagnóstico/Ajustes
+   └── C-044 i18n ES/EN/PT-BR
           │
 C-050 Empaquetado
    │
@@ -62,7 +63,7 @@ C-062 Release MVP
 
 - `C-001` **completado**: licencia ratificada, `LICENSE` y `NOTICE` publicados.
 - Política de notificaciones **decidida**: desactivadas por defecto; el daemon notifica estados terminales.
-- Nombres ES/EN de los 13 presets **ratificados**; PT-BR en v0.2.
+- Nombres ES/EN/PT-BR de los 13 presets **ratificados** para v0.1.
 - `C-010` es el primer item desbloqueado. No se ha creado código todavía.
 
 ## Backlog del MVP
@@ -88,6 +89,7 @@ C-062 Release MVP
 | `C-041` | 3 | P2 | Página Convertir | C-040, C-012, C-013, C-014 | Añadir archivos/carpetas, inspeccionar, elegir preset y encolar |
 | `C-042` | 3 | P2 | Página Cola | C-040, C-031 | Progreso, pausa, reanudar, cancelar, reintentar y eliminar |
 | `C-043` | 3 | P2 | Presets, Diagnóstico y Ajustes | C-040 | Catálogo legible, FFmpeg/CPU/disco, tema/idioma/concurrencia |
+| `C-044` | 3 | P2 | i18n ES/EN/PT-BR y cambio en vivo | C-040 | Catálogos completos, selector de idioma, fallback y tests de claves |
 | `C-050` | 4 | P2 | `.deb`, desktop, AppStream, iconos y unidades | C-033, C-040 | Paquete instalable con dependencias declaradas |
 | `C-051` | 4 | P2 | `check-package` | C-050 | Valida binarios, unidades, metadatos, permisos y dependencias |
 | `C-052` | 4 | P2 | CI Ubuntu 26.04 | C-051 | fmt, clippy, tests, GUI Xvfb y clean-install |

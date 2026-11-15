@@ -47,7 +47,7 @@ La primera entrega será un **MVP enfocado en convertir, encolar y aplicar prese
 - Política de duplicados: `suffix`, `skip` y `overwrite`, sin sobrescribir nunca el archivo de entrada.
 - Diagnóstico de FFmpeg, CPU, espacio en disco y estado del daemon.
 - Logs básicos consultables y persistentes.
-- Ajustes: carpeta de salida, concurrencia, tema, idioma y notificaciones.
+- Ajustes: carpeta de salida, concurrencia, tema, idioma (ES/EN/PT-BR) y notificaciones.
 - GUI con Convertir, Cola, Presets, Diagnóstico y Ajustes.
 - `.deb` instalable con `ffmpeg` y dependencias GTK4 declaradas.
 - CLI mínima para diagnóstico y pruebas de integración.
@@ -302,7 +302,7 @@ Ventana principal con `AdwNavigationSplitView`:
 | Cola | Trabajos, progreso, FPS, velocidad, ETA, pausa/cancelar/reintentar |
 | Presets | Catálogo del sistema y explicación del plan |
 | Diagnóstico | FFmpeg, versión, encoders, CPU, disco y daemon |
-| Ajustes | Carpeta, concurrencia, tema, idioma y notificaciones |
+| Ajustes | Carpeta, concurrencia, tema, idioma (ES/EN/PT-BR) y notificaciones |
 
 La GUI usa el portal para archivos y carpetas, acepta drag & drop y muestra un estado vacío distinto de un error. No incluye páginas de Watchers ni Historial en v0.1; la documentación de paridad las define.
 
@@ -410,7 +410,7 @@ El paquete se construye con `cargo-deb` y pasa una puerta de empaquetado que val
 
 - Licencia **GPL-3.0-or-later** ratificada; `LICENSE` y `NOTICE` publicados.
 - Notificaciones desactivadas por defecto; el daemon notifica solo estados terminales y usa el nombre base del archivo.
-- Nombres ES/EN de los 13 presets ratificados en [`presets.md`](presets.md); PT-BR llega en v0.2.
+- Nombres ES/EN/PT-BR de los 13 presets ratificados en [`presets.md`](presets.md).
 - No quedan decisiones de arquitectura bloqueantes para iniciar `C-010`.
 
 La implementación debe empezar por el workspace y los contratos, no por la GUI.
