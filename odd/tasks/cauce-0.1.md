@@ -686,3 +686,11 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Omitidas y borradas**: `Ajustes` y `Diagnóstico` no cambiaron de sección tras los clics (las imágenes salían idénticas entre sí), así que no hay archivo con nombre falso. `03-presets` tampoco se pudo verificar en esta pasada y se retiró.
 - Set final: `01-convertir` (1440), `02-cola` (1440), `06-convertir-960` (960). Faltan capturas verificadas de Presets, Ajustes y Diagnóstico.
 - No se siguió iterando, según lo indicado.
+
+**L49 (evidencia final) — seis capturas, dos verificadas a ojo en esta pasada:**
+- **`04-ajustes.png` verificada**: título "Ajustes" y sidebar resaltando Ajustes (la fila correcta es y≈226, no 188 — ahí estaba el error de las pasadas anteriores). Contenido correcto: General (carpeta, trabajos simultáneos, tema, idioma) y Comportamiento (notificaciones, duplicados, temporal), tarjetas de ancho consistente y sin solapamiento de iconos.
+- **`02-cola.png` verificada**: trabajo **sembrado por IPC con carpeta única** (`~/cauce-qa-final-<epoch>`), estado final **completed**, y la fila muestra **"Completada" con la barra llena (100 %)** — el arreglo crítico 3 queda probado con captura. "Abrir carpeta"/"Abrir archivo" son botones pill.
+- **El punto junto a "Cola" NO aparece** en esta captura de ventana cliente. Se documenta como **artefacto transitorio de render** (apareció en capturas de pantalla completa y no en la de la ventana cliente con el mismo título): no se persigue porque no se reproduce.
+- `03-presets.png` restaurada de `e40e8d5` y `05-diagnostico.png` restaurada de `7b84a52` — es una captura de **1440×900**, no de 960: el archivo original estaba mal nombrado y se corrige el nombre, no la imagen. `01-convertir` (1440) y `06-convertir-960` (960) se mantienen.
+- Set final: `01-convertir` 1440×900 · `02-cola` 1440×900 · `03-presets` 1440×900 · `04-ajustes` 1440×900 · `05-diagnostico` 1440×900 · `06-convertir-960` 960×640. Dimensiones verificadas leyendo la cabecera PNG de cada archivo.
+- Sigue faltando **Convertir con archivo** (DnD imposible sin ventana origen; `GtkFileDialog` no cierra bajo Xvfb).
