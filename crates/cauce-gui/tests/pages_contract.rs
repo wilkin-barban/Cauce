@@ -8,14 +8,15 @@
 //! value comes from `cauce-core` and is built literally, never from a fixture.
 
 use cauce_core::{
-    Capabilities, CustomAudio, CustomBitrate, CustomContainer, CustomVideo, DeviceFamily,
-    DuplicatePolicy, ErrorCode, HdrPolicy, Language, Preset, Settings, SubtitlePolicy, Theme,
-    system_presets,
+    Capabilities, CustomAudio, CustomBitrate, CustomContainer, CustomSubtitles, CustomVideo,
+    DeviceFamily, DuplicatePolicy, ErrorCode, HdrPolicy, Language, Preset, Settings,
+    SubtitlePolicy, Theme, system_presets,
 };
 use cauce_gui::pages::convert::flows::preset_choices;
 use cauce_gui::pages::diagnostics::{capabilities_report, human_bytes};
 use cauce_gui::pages::presets::{
-    CUSTOM_CATEGORY, CustomDraft, category_label, group_presets, preset_detail,
+    CUSTOM_CATEGORY, CustomDraft, PresetFilter, category_label, filter_presets, filters_in_order,
+    group_presets, preset_detail, preset_essentials,
 };
 use cauce_gui::pages::settings::{
     SettingsEdit, edit_params, output_dir_to_show, settings_after_edit, theme_from_str,
@@ -152,13 +153,15 @@ fn preset_detail_skips_unset_fields() {
             "Contenedor",
             "Códec de video",
             "Códec de audio",
+            "Calidad (CRF)",
+            "Resolución máxima",
             "HDR",
             "Subtítulos",
             "Faststart",
             "Metadatos",
         ],
-        "el título del panel ya muestra el nombre: sin Nombre duplicado, y sin \
-         resolución, CRF, bitrate, FPS ni bits no hay fila"
+        "el título del panel ya muestra el nombre: sin Nombre duplicado, sin bitrate, FPS \
+         ni bits no hay fila, y las cinco esenciales siempre están"
     );
     assert!(
         rows.iter().all(|(_, value)| !value.is_empty()),
@@ -184,6 +187,151 @@ fn preset_detail_skips_unset_fields() {
     assert_eq!(find("Bitrate de audio").as_deref(), Some("160k"));
     assert_eq!(find("FPS máximos").as_deref(), Some("60"));
     assert_eq!(find("Profundidad de bits").as_deref(), Some("10 bits"));
+}
+
+// The navigator above the list: six chips, one per group, in the documented
+// order, and each one filters the catalog to its own group.
+
+#[test]
+fn filters_are_in_the_documented_order() {
+    assert_eq!(
+        filters_in_order(),
+        [
+            PresetFilter::All,
+            PresetFilter::Tv,
+            PresetFilter::Web,
+            PresetFilter::Archive,
+            PresetFilter::Audio,
+            PresetFilter::Custom,
+        ],
+        "Todas, Smart TV, Web, Archivo, Audio, Personalizado: `Personalizado` existe \
+         desde la primera pantalla y no al final de un scroll"
+    );
+
+    let labels: Vec<String> = filters_in_order()
+        .iter()
+        .map(|filter| filter.label())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Todas",
+            "Smart TV",
+            "Web",
+            "Archivo",
+            "Audio",
+            "Personalizado"
+        ],
+        "cada chip se lee en el idioma vigente"
+    );
+}
+
+#[test]
+fn custom_filter_selects_only_the_custom_preset() {
+    let mut presets: Vec<Preset> = system_presets().to_vec();
+    presets.push(custom_draft().to_custom().to_preset().expect("legal"));
+
+    let custom = filter_presets(&presets, PresetFilter::Custom);
+    assert_eq!(custom.len(), 1, "el grupo propio tiene un solo preset");
+    assert_eq!(custom[0].id, "custom-1");
+    assert_eq!(custom[0].category, CUSTOM_CATEGORY);
+
+    // Ninguno de los trece del sistema cae en «Personalizado».
+    assert!(
+        custom
+            .iter()
+            .all(|preset| !preset.id.starts_with("system-")),
+        "el sistema no se mezcla con el preset propio: {custom:?}"
+    );
+}
+
+#[test]
+fn all_filter_shows_thirteen_plus_custom() {
+    let system = system_presets().to_vec();
+    assert_eq!(system.len(), 13);
+    let mut presets = system.clone();
+    presets.push(custom_draft().to_custom().to_preset().expect("legal"));
+
+    let all = filter_presets(&presets, PresetFilter::All);
+    assert_eq!(all.len(), 14, "trece del sistema y el propio");
+    assert_eq!(all.len(), system.len() + 1);
+
+    // Cada grupo aporta su parte y entre todos suman el catálogo completo.
+    let groups = [
+        PresetFilter::Tv,
+        PresetFilter::Web,
+        PresetFilter::Archive,
+        PresetFilter::Audio,
+        PresetFilter::Custom,
+    ];
+    let total: usize = groups
+        .iter()
+        .map(|filter| filter_presets(&presets, *filter).len())
+        .sum();
+    assert_eq!(total, all.len(), "un chip por grupo, sin presets perdidos");
+    for filter in groups {
+        assert!(
+            filter_presets(&presets, filter)
+                .iter()
+                .all(|preset| all.iter().any(|shown| shown.id == preset.id)),
+            "«{}» filtra el catálogo, nunca lo inventa",
+            filter.label()
+        );
+    }
+}
+
+// The five essentials of the detail panel, always in the same order.
+
+#[test]
+fn preset_essentials_lists_the_five_fields_in_order() {
+    let preset = system_presets()[0].clone();
+    let rows = preset_essentials(&preset);
+
+    let labels: Vec<&str> = rows.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Contenedor",
+            "Códec de video",
+            "Códec de audio",
+            "Calidad (CRF)",
+            "Resolución máxima",
+        ],
+        "las cinco filas esenciales, en el orden en que se leen de un vistazo"
+    );
+    assert!(
+        rows.iter().all(|(_, value)| !value.trim().is_empty()),
+        "ninguna fila esencial queda vacía: {rows:?}"
+    );
+    // El contenedor y la resolución son valores, no claves del catálogo.
+    assert_eq!(rows[0].1, preset.container);
+    assert_eq!(rows[3].1, preset.video_quality.expect("CRF").to_string());
+}
+
+#[test]
+fn preset_essentials_omits_missing_values() {
+    let mut draft = custom_draft();
+    draft.video = CustomVideo::None;
+    draft.subtitles = CustomSubtitles::Remove;
+    let custom = draft.to_custom().to_preset().expect("legal");
+    assert_eq!(custom.video_codec, "none");
+    assert_eq!(custom.video_quality, None);
+
+    let rows = preset_essentials(&custom);
+    let find = |label: &str| {
+        rows.iter()
+            .find(|(name, _)| name == label)
+            .map(|(_, value)| value.clone())
+    };
+    // Un valor que falta no deja la fila vacía ni la esconde: la dice en palabras.
+    assert_eq!(rows.len(), 5, "las cinco filas siguen ahí: {rows:?}");
+    assert!(
+        rows.iter().all(|(_, value)| !value.trim().is_empty()),
+        "nada se muestra como una fila vacía: {rows:?}"
+    );
+    assert_eq!(find("Códec de video").as_deref(), Some("Sin video"));
+    assert_eq!(find("Calidad (CRF)").as_deref(), Some("Sin CRF"));
+    assert_eq!(find("Resolución máxima").as_deref(), Some("Original"));
 }
 
 #[test]

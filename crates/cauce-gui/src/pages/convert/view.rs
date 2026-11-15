@@ -101,9 +101,12 @@ impl Ui {
         inspecting.set_visible(false);
 
         // Empty, ready and partial are sentences, never only the spinner state
-        // (`docs/ui-mvp.md` §4).
+        // (`docs/ui-mvp.md` §4). The empty state has no sentence of its own: the
+        // drop card already says what to do, and saying it twice (`L54`) made the
+        // page look like two different instructions.
         let phase_label = text_line("dim-label");
-        phase_label.set_label(t("convert.phase_empty"));
+        phase_label.set_label("");
+        phase_label.set_visible(false);
 
         let failure = error_surface("convert-error");
 
@@ -421,13 +424,15 @@ pub fn refresh(
                 .find(|preset| preset.id == id)
                 .cloned()
         });
-        ui.phase_label.set_visible(state.error().is_none());
         ui.phase_label.set_label(match state.phase() {
-            ConvertPhase::Empty => t("convert.phase_empty"),
             ConvertPhase::Ready => t("convert.phase_ready"),
             ConvertPhase::Partial => t("convert.phase_partial"),
             _ => "",
         });
+        // Only a non-empty list gets a phase sentence: the empty state is the drop
+        // card alone (`L54`).
+        ui.phase_label
+            .set_visible(state.error().is_none() && !ui.phase_label.text().trim().is_empty());
         ui.preset_group
             .set_description(preset.as_ref().map(localized_preset_description));
         if let Some(preset) = preset {

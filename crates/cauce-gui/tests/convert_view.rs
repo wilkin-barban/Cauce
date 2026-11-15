@@ -148,6 +148,38 @@ fn plan() -> ConversionPlan {
 }
 
 #[test]
+fn the_empty_state_has_a_single_instruction() {
+    let ran = with_page(|content, _window| {
+        let mut titles = 0;
+        let mut duplicated = 0;
+        walk(content, &mut |widget| {
+            let Some(label) = widget.downcast_ref::<gtk::Label>() else {
+                return;
+            };
+            if label.text() == t("convert.drop_title") {
+                titles += 1;
+            }
+            // La segunda instrucción repetida: la tarjeta ya lo dice.
+            if label.text() == t("convert.phase_empty") {
+                duplicated += 1;
+            }
+        });
+
+        assert_eq!(
+            titles, 1,
+            "el estado vacío se apoya en la tarjeta de drop, una sola vez"
+        );
+        assert_eq!(
+            duplicated, 0,
+            "no hay una segunda instrucción debajo de la tarjeta"
+        );
+    });
+    if !ran {
+        skip("the_empty_state_has_a_single_instruction");
+    }
+}
+
+#[test]
 fn the_plan_needs_one_visible_line_and_keeps_the_rest_in_the_details() {
     let plan = plan();
     let headline = plan_headline(&plan);

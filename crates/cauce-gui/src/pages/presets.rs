@@ -6,9 +6,15 @@
 //! affordance to edit or delete. The fifth group, «Personalizado», holds exactly
 //! one preset the user owns; saving replaces it and there is no generic editor.
 //!
-//! The decision core ([`group_presets`], [`preset_detail`], [`preset_technical_detail`]
-//! and [`CustomDraft`]) contains no GTK type, so `tests/pages_contract.rs` covers
-//! it without a display; the rest of this module is only its rendering.
+//! The decision core ([`PresetFilter`], [`group_presets`], [`preset_essentials`],
+//! [`preset_technical_detail`] and [`CustomDraft`]) contains no GTK type, so
+//! `tests/pages_contract.rs` covers it without a display; the rest of this module
+//! is only its rendering.
+//!
+//! The six chips of the navigator ([`filters_in_order`]) are what makes the
+//! groups navigable: they sit above the split view, outside every scrolled area,
+//! so «Personalizado» is on the first screen instead of at the end of a long
+//! scroll (`odd/tasks/cauce-0.1.md`, L54).
 //!
 //! `docs/ui-mvp.md` §6 lists six group names for what `docs/contracts.md` §2.3
 //! models as four `category` values, so each documented pair collapses into the
@@ -32,8 +38,8 @@ use serde_json::json;
 
 use crate::client::Client;
 use crate::i18n::{
-    codec_label, hdr_label, human_error, localized_preset_description, localized_preset_name,
-    resolution, subtitle_label, t, technical_details, yes_no,
+    hdr_label, human_error, localized_preset_description, localized_preset_name, resolution,
+    subtitle_label, t, technical_details, yes_no,
 };
 use crate::pages::{
     ErrorSurface, clear_failure, error_details_label, error_surface, escaped, show_parts,
@@ -47,6 +53,93 @@ pub const CUSTOM_CATEGORY: &str = "custom";
 
 /// Read-only notice, the only action the system groups do not offer.
 const READ_ONLY: &str = "presets.read_only";
+
+/// The chips of the navigator above the list: one per group plus «Todas».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresetFilter {
+    All,
+    Tv,
+    Web,
+    Archive,
+    Audio,
+    Custom,
+}
+
+impl PresetFilter {
+    /// The `category` this chip keeps; `None` keeps the whole catalog.
+    pub const fn category(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Tv => Some("tv"),
+            Self::Web => Some("social"),
+            Self::Archive => Some("archive"),
+            Self::Audio => Some("audio"),
+            Self::Custom => Some(CUSTOM_CATEGORY),
+        }
+    }
+
+    /// Stable identifier of the chip, also the name of its `AdwToggle`.
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Tv => "tv",
+            Self::Web => "web",
+            Self::Archive => "archive",
+            Self::Audio => "audio",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// The chip a toggle name stands for; «Todas» when the name is not ours.
+    pub fn from_slug(slug: &str) -> Self {
+        filters_in_order()
+            .into_iter()
+            .find(|filter| filter.slug() == slug)
+            .unwrap_or(Self::All)
+    }
+
+    /// The label of the chip in the current locale. The four short names are not
+    /// the group headers: a chip has to fit next to the other five.
+    pub fn label(self) -> String {
+        match self {
+            Self::All => t("presets.filter_all").to_owned(),
+            Self::Tv => category_label("tv"),
+            Self::Web => t("presets.filter_web").to_owned(),
+            Self::Archive => t("presets.filter_archive").to_owned(),
+            Self::Audio => t("presets.filter_audio").to_owned(),
+            Self::Custom => category_label(CUSTOM_CATEGORY),
+        }
+    }
+
+    /// Whether this view always offers the «Personalizado» slot, which is how
+    /// the one preset the user owns is created.
+    const fn offers_custom_slot(self) -> bool {
+        matches!(self, Self::All | Self::Custom)
+    }
+}
+
+/// The chips in the documented order, «Todas» first and «Personalizado» last.
+pub fn filters_in_order() -> [PresetFilter; 6] {
+    [
+        PresetFilter::All,
+        PresetFilter::Tv,
+        PresetFilter::Web,
+        PresetFilter::Archive,
+        PresetFilter::Audio,
+        PresetFilter::Custom,
+    ]
+}
+
+/// The presets that belong to `filter`, keeping the catalog order.
+pub fn filter_presets(presets: &[Preset], filter: PresetFilter) -> Vec<&Preset> {
+    match filter.category() {
+        Some(category) => presets
+            .iter()
+            .filter(|preset| preset.category == category)
+            .collect(),
+        None => presets.iter().collect(),
+    }
+}
 
 /// Header of one category; an unknown category keeps its own name.
 pub fn category_label(category: &str) -> String {
@@ -63,9 +156,13 @@ pub fn category_label(category: &str) -> String {
 /// Groups the catalog by `category`, in the documented order, keeping catalog
 /// order inside each group. Unknown categories come next, alphabetically, and
 /// «Personalizado» always goes last: it is the group the user owns.
-pub fn group_presets(presets: &[Preset]) -> Vec<(String, Vec<&Preset>)> {
+///
+/// Generic over what the slice holds so a filtered view (`&[&Preset]`) and the
+/// catalog itself (`&[Preset]`) both group without cloning.
+pub fn group_presets<T: std::borrow::Borrow<Preset>>(presets: &[T]) -> Vec<(String, Vec<&Preset>)> {
     let mut buckets: BTreeMap<&str, Vec<&Preset>> = BTreeMap::new();
     for preset in presets {
+        let preset: &Preset = std::borrow::Borrow::borrow(preset);
         buckets
             .entry(preset.category.as_str())
             .or_default()
@@ -101,33 +198,70 @@ pub fn preset_detail(preset: &Preset) -> Vec<(String, String)> {
         t("presets.detail_description").to_owned(),
         localized_preset_description(preset).to_owned(),
     ));
+    rows.extend(preset_essentials(preset));
     rows.extend(preset_technical_detail(preset));
     rows
 }
 
+/// The five rows the detail pane shows without opening anything: what the file
+/// will be, in the order a person reads it. A value the preset leaves unset is
+/// said in words («Sin video», «Sin CRF», «Original»), never as an empty row.
+pub fn preset_essentials(preset: &Preset) -> Vec<(String, String)> {
+    vec![
+        (
+            t("presets.detail_container").to_owned(),
+            preset.container.clone(),
+        ),
+        (
+            t("presets.detail_video_codec").to_owned(),
+            track_label(&preset.video_codec, "presets.custom_video_none"),
+        ),
+        (
+            t("presets.detail_audio_codec").to_owned(),
+            track_label(&preset.audio_codec, "presets.custom_audio_none"),
+        ),
+        (
+            t("presets.detail_quality").to_owned(),
+            match preset.video_quality {
+                Some(crf) => crf.to_string(),
+                None => t("presets.value_no_quality").to_owned(),
+            },
+        ),
+        (
+            t("presets.detail_resolution").to_owned(),
+            resolution(preset.max_width, preset.max_height)
+                .unwrap_or_else(|| t("presets.custom_resolution_original").to_owned()),
+        ),
+    ]
+}
+
+/// A codec as the user reads it: a copy keeps the source, a removed track says
+/// so, and every other codec keeps its own name.
+fn track_label(codec: &str, missing_key: &'static str) -> String {
+    match codec {
+        "copy" => t("presets.custom_copy").to_owned(),
+        "none" => t(missing_key).to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 /// The technical rows only: what the collapsed «Detalles técnicos» shows. The
-/// description is not technical, so it never lands inside the disclosure.
+/// five essentials are already on screen, so they never repeat here.
 pub fn preset_technical_detail(preset: &Preset) -> Vec<(String, String)> {
-    let mut rows: Vec<(String, String)> = Vec::with_capacity(12);
+    let mut rows: Vec<(String, String)> = Vec::with_capacity(9);
     let mut push = |key: &'static str, value: String| rows.push((t(key).to_owned(), value));
 
-    push("presets.detail_container", preset.container.clone());
-    push(
-        "presets.detail_video_codec",
-        codec_label(&preset.video_codec),
-    );
-    push("presets.detail_audio_codec", preset.audio_codec.clone());
-    if let Some(crf) = preset.video_quality {
-        push("presets.detail_quality", crf.to_string());
-    }
     if let Some(bitrate) = preset.audio_bitrate.as_ref() {
         push("presets.detail_audio_bitrate", bitrate.clone());
     }
-    if let Some(resolution) = resolution(preset.max_width, preset.max_height) {
-        push("presets.detail_resolution", resolution);
-    }
     if let Some(fps) = preset.max_fps {
         push("presets.detail_fps", fps_label(fps));
+    }
+    if let Some(profile) = preset.profile.as_ref() {
+        push("presets.detail_profile", profile.clone());
+    }
+    if let Some(level) = preset.level {
+        push("presets.detail_level", level.to_string());
     }
     if let Some(bits) = preset.max_bit_depth {
         push(
@@ -294,12 +428,15 @@ struct Ui {
     page: adw::NavigationPage,
     stack: gtk::Stack,
     list: gtk::ListBox,
+    /// The navigator above the list: it stays put while the rows scroll.
+    filters: adw::ToggleGroup,
     error: adw::StatusPage,
     error_expander: gtk::Expander,
     error_details: gtk::Label,
     retry: gtk::Button,
     title: gtk::Label,
     description: gtk::Label,
+    essentials: gtk::ListBox,
     technical: gtk::Expander,
     detail_list: gtk::ListBox,
     notice: gtk::Label,
@@ -431,6 +568,16 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
         let (client, ui, presets) = (Rc::clone(client), ui.clone(), Rc::clone(&presets));
         move |_| load(&client, &ui, &presets, None)
     });
+    ui.filters.connect_active_name_notify({
+        let (ui, presets) = (ui.clone(), Rc::clone(&presets));
+        move |group| {
+            let filter =
+                PresetFilter::from_slug(group.active_name().as_deref().unwrap_or_default());
+            // A chip is a view, not a selection: the list opens on its first row,
+            // and «Personalizado» opens the editor inline when there is one.
+            render(&ui, &presets, None, filter);
+        }
+    });
 
     wire_editor(client, &ui, &presets);
     load(client, &ui, &presets, None);
@@ -559,8 +706,14 @@ fn build() -> Ui {
     description.set_xalign(0.0);
     description.set_wrap(true);
 
-    // Technical values live behind this closed disclosure, so the panel opens with
-    // the name and the sentence that explains the preset and nothing else.
+    // What the panel shows at a glance: five rows, always in the same order.
+    let essentials = gtk::ListBox::new();
+    essentials.add_css_class("boxed-list");
+    essentials.set_selection_mode(gtk::SelectionMode::None);
+    essentials.set_widget_name("preset-essentials");
+
+    // Everything else lives behind this closed disclosure, so the panel opens with
+    // the name, the sentence that explains the preset and those five values.
     let detail_list = gtk::ListBox::new();
     detail_list.add_css_class("boxed-list");
     detail_list.set_selection_mode(gtk::SelectionMode::None);
@@ -583,6 +736,7 @@ fn build() -> Ui {
     detail.append(&title);
     detail.append(&description);
     detail.append(&editor.area);
+    detail.append(&essentials);
     detail.append(&technical);
     detail.append(&notice);
 
@@ -592,10 +746,17 @@ fn build() -> Ui {
     split.set_min_sidebar_width(220.0);
     split.set_max_sidebar_width(320.0);
 
+    // The navigator sits above the split, outside every scrolled area, so
+    // «Personalizado» is on the first screen and the chips never scroll away.
+    let filters = filter_bar();
+    let ready = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    ready.append(&chips(&filters));
+    ready.append(&split);
+
     let stack = gtk::Stack::new();
     stack.add_named(&loading, Some("loading"));
     stack.add_named(&error, Some("error"));
-    stack.add_named(&split, Some("ready"));
+    stack.add_named(&ready, Some("ready"));
     stack.set_visible_child_name("loading");
 
     let toolbar = adw::ToolbarView::new();
@@ -608,17 +769,53 @@ fn build() -> Ui {
         page,
         stack,
         list,
+        filters,
         error,
         error_expander,
         error_details,
         retry,
         title,
         description,
+        essentials,
         technical,
         detail_list,
         notice,
         editor,
     }
+}
+
+/// Six chips in the documented order, «Todas» selected first.
+fn filter_bar() -> adw::ToggleGroup {
+    let group = adw::ToggleGroup::new();
+    group.set_widget_name("preset-filters");
+    group.set_homogeneous(true);
+    for filter in filters_in_order() {
+        let toggle = adw::Toggle::new();
+        toggle.set_name(Some(filter.slug()));
+        toggle.set_label(Some(&filter.label()));
+        group.add(toggle);
+    }
+    group.set_active_name(Some(PresetFilter::All.slug()));
+    group
+}
+
+/// The strip that holds the chips: its own horizontal scroller so a narrow window
+/// clips nothing, and never part of the list it filters.
+fn chips(group: &adw::ToggleGroup) -> gtk::ScrolledWindow {
+    let strip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    strip.set_margin_top(6);
+    strip.set_margin_bottom(6);
+    strip.set_margin_start(12);
+    strip.set_margin_end(12);
+    strip.set_halign(gtk::Align::Center);
+    strip.append(group);
+
+    let scroller = gtk::ScrolledWindow::new();
+    scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    scroller.set_propagate_natural_height(true);
+    scroller.set_vexpand(false);
+    scroller.set_child(Some(&strip));
+    scroller
 }
 
 /// The seven combo rows, Save and Delete, all hidden until «Personalizado» is
@@ -812,8 +1009,13 @@ async fn apply_answer(
         }
     };
     *presets.borrow_mut() = list;
-    render(&ui, &presets, select);
+    render(&ui, &presets, select, current_filter(&ui));
     ui.stack.set_visible_child_name("ready");
+}
+
+/// The chip the navigator has selected; «Todas» when it has none.
+fn current_filter(ui: &Ui) -> PresetFilter {
+    PresetFilter::from_slug(ui.filters.active_name().as_deref().unwrap_or_default())
 }
 
 /// A daemon failure: the human sentence is the visible description and the raw
@@ -852,15 +1054,16 @@ fn fail_custom(ui: &Ui, error: &JobError) {
     );
 }
 
-/// Rebuilds the grouped list, adds the «Personalizado» slot and selects `select`
-/// (or the first row when that id is not there).
-fn render(ui: &Ui, presets: &Rc<RefCell<Vec<Preset>>>, select: Option<&str>) {
+/// Rebuilds the list for `filter`, adds the «Personalizado» slot and selects
+/// `select` (or the first row when that id is not in this view).
+fn render(ui: &Ui, presets: &Rc<RefCell<Vec<Preset>>>, select: Option<&str>, filter: PresetFilter) {
     while let Some(child) = ui.list.first_child() {
         ui.list.remove(&child);
     }
     let presets = presets.borrow();
+    let visible = filter_presets(&presets, filter);
     let mut custom_defined = false;
-    for (category, items) in group_presets(&presets) {
+    for (category, items) in group_presets(&visible) {
         ui.list.append(&header_row(&category));
         for preset in items {
             if preset.category == CUSTOM_CATEGORY {
@@ -869,9 +1072,9 @@ fn render(ui: &Ui, presets: &Rc<RefCell<Vec<Preset>>>, select: Option<&str>) {
             ui.list.append(&preset_row(preset));
         }
     }
-    if !custom_defined {
-        // The group always exists: without it there would be no way to create the
-        // one preset the user is allowed to own.
+    if !custom_defined && filter.offers_custom_slot() {
+        // The group always exists in those views: without it there would be no way
+        // to create the one preset the user is allowed to own.
         ui.list.append(&header_row(CUSTOM_CATEGORY));
         ui.list.append(&placeholder_row());
     }
@@ -961,15 +1164,15 @@ fn codec_summary(preset: &Preset) -> String {
     }
 }
 
-/// The detail pane of a system preset: name, one sentence and, behind the closed
-/// disclosure, every technical value.
+/// The detail pane of a system preset: name, one sentence, the five essentials
+/// and, behind the closed disclosure, the rest of the technical values.
 fn show_system(ui: &Ui, preset: &Preset) {
     ui.editor.area.set_visible(false);
     ui.notice.set_visible(true);
     ui.title.set_label(localized_preset_name(preset));
     ui.description
         .set_label(localized_preset_description(preset));
-    fill_technical(ui, preset);
+    fill_detail(ui, preset);
 }
 
 /// The detail pane of the custom preset: the same titles plus the editor.
@@ -983,13 +1186,14 @@ fn show_custom(ui: &Ui, preset: Option<&Preset>) {
             ui.title.set_label(localized_preset_name(preset));
             ui.description
                 .set_label(localized_preset_description(preset));
-            fill_technical(ui, preset);
+            fill_detail(ui, preset);
             ui.editor.apply(CustomDraft::from_preset(preset));
             ui.editor.delete.set_sensitive(true);
         }
         None => {
             ui.title.set_label(t("presets.group_custom"));
             ui.description.set_label(t("presets.custom_hint"));
+            ui.essentials.set_visible(false);
             ui.technical.set_visible(false);
             ui.editor.apply(CustomDraft::defaults());
             ui.editor.delete.set_sensitive(false);
@@ -997,17 +1201,25 @@ fn show_custom(ui: &Ui, preset: Option<&Preset>) {
     }
 }
 
-fn fill_technical(ui: &Ui, preset: &Preset) {
-    while let Some(child) = ui.detail_list.first_child() {
-        ui.detail_list.remove(&child);
+fn fill_detail(ui: &Ui, preset: &Preset) {
+    fill_rows(&ui.essentials, preset_essentials(preset));
+    fill_rows(&ui.detail_list, preset_technical_detail(preset));
+    ui.essentials.set_visible(true);
+    ui.technical.set_visible(true);
+    // A new selection opens the disclosure closed, so the panel never inherits the
+    // height of the last expansion (`L43`).
+    ui.technical.set_expanded(false);
+}
+
+fn fill_rows(list: &gtk::ListBox, rows: Vec<(String, String)>) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
     }
-    for (label, value) in preset_technical_detail(preset) {
+    for (label, value) in rows {
         let row = adw::ActionRow::new();
         row.set_title(&escaped(&label));
         row.set_subtitle(&escaped(&value));
         row.set_subtitle_lines(0);
-        ui.detail_list.append(&row);
+        list.append(&row);
     }
-    ui.technical.set_visible(true);
-    ui.technical.set_expanded(false);
 }
