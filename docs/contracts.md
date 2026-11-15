@@ -178,6 +178,7 @@ Envolvente de error:
 | `jobs.retry` | `id` | `Job` |
 | `jobs.recover` | `id` | `Job` |
 | `jobs.remove` | `id` | `{removed: bool}` |
+| `jobs.clear_finished` | `{}` | `{removed: N}` |
 | `queue.pause` / `queue.resume` / `queue.start` | `{}` | `{paused: bool}` |
 | `presets.list` | `{}` | `Preset[]` (los trece del sistema y, si existe, `custom-1` al final) |
 | `presets.set_custom` | `CustomPreset` (§2.3) | `Preset` (el `custom-1` resultante) |

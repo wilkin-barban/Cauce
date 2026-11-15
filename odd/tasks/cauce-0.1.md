@@ -775,3 +775,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Test `custom_detail_has_one_title_and_one_description`. Suite **296/296**; `fmt` y `clippy -D warnings` limpios.
 - **`07-presets-custom.png` recapturada y verificada**: chip Personalizado activo, fila "Mi preset", título de detalle "Mi preset" una sola vez, descripción una sola vez, los siete campos y Guardar/Borrar. El clic se validó comparando el frame previo (`CAMBIO_OK`).
 - **Paquete nuevo**: `sha256 15438697a20ea9bc663b3a7ce5936d9332b3b4142519de2009a111e39828877d`, instalado (`dpkg 0.1.0-1`) con `cauce.socket` **active**.
+
+**L58 (selección explícita y "Limpiar lista") — implementado con TDD:**
+- **Convertir**: encabezado "Seleccionado (1)"/"Seleccionados (N)" con tamaño total, lista de aceptados con nombre + resumen (contenedor · duración · resolución) y "Quitar" por fila, "Quitar todos", y una frase antes de la CTA: "Se añadirán N archivos a la cola" con preset y carpeta, o nombrando exactamente cuál falta. Tras encolar, confirmación con N y acción "Abrir la cola" que cambia de sección; la selección no se borra en silencio.
+- **Cola**: resumen visible con total, activos, en espera y terminados; botón **"Limpiar lista"** con confirmación que dice cuántos se quitarán, deshabilitado si no hay terminados.
+- **Daemon**: método real **`jobs.clear_finished`** (`{}` → `{removed: N}`), un solo transacción en el store que borra completed/failed/cancelled/interrupted con sus eventos y reservas, un único `queue.updated`. `contracts.md` §6 actualizado. Nada de bucles de `jobs.remove` desde la GUI.
+- **Pluralización** ES/EN/PT-BR en 8 pares de claves.
+- Suite **309/309**, `fmt` y `clippy -D warnings` limpios. RED por área: `no method named clear_finished`, `método desconocido jobs.clear_finished`, `no method named summary_line`, `no method named notice`.
