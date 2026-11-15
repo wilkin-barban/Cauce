@@ -1,7 +1,7 @@
 # Cauce — Backlog técnico
 
 **Estado:** planificación, sin implementación  
-**Fuentes:** [`architecture.md`](architecture.md), [`parity.md`](parity.md), [`adr/`](adr/)  
+**Fuentes:** [`architecture.md`](architecture.md), [`parity.md`](parity.md), [`adr/`](adr/), [`contracts.md`](contracts.md), [`presets.md`](presets.md), [`data-model.md`](data-model.md), [`ui-mvp.md`](ui-mvp.md)  
 **Objetivo:** convertir las especificaciones en unidades de trabajo verificables, con dependencias y puertas de calidad explícitas.
 
 ## Convenciones
@@ -62,22 +62,22 @@ C-062 Release MVP
 
 | ID | Fase | Prio | Entrega | Depende de | Aceptación |
 |---|---|---|---|---|---|
-| `C-001` | 0 | P0 | Ratificar licencia y completar `LICENSE`/`NOTICE` | ADR 0006 | La licencia queda aceptada y documentada antes de la release |
+| `C-001` | 0 | P0 | Crear `LICENSE`/`NOTICE` con GPL-3.0-or-later ratificada | ADR 0006 | Licencia materializada, con atribución de código MIT si se reutiliza |
 | `C-010` | 1 | P1 | Workspace Rust y crates vacíos con fronteras del ADR | C-001 | `cargo metadata` lista los crates y no hay dependencias invertidas |
-| `C-011` | 1 | P1 | Tipos de dominio: snapshot, plan, job, preset, ajustes | C-010 | Serialización estable y tests de contrato |
+| `C-011` | 1 | P1 | Tipos de dominio según `contracts.md` | C-010 | Serialización estable y tests de contrato |
 | `C-012` | 1 | P1 | Parser FFprobe JSON | C-011 | Fixtures de video/audio/subtítulos y errores cubiertos |
-| `C-013` | 1 | P1 | Catálogo de los 13 presets del sistema | C-011 | IDs y campos coinciden con `parity.md`; tests de catálogo |
+| `C-013` | 1 | P1 | Catálogo de los 13 presets según `presets.md` | C-011 | IDs y campos coinciden con `presets.md`; tests de catálogo |
 | `C-014` | 1 | P1 | Motor de compatibilidad video/audio/subtítulos | C-012, C-013 | Copy/transcode/remove se decide por stream y se explica |
 | `C-015` | 1 | P1 | Command builder seguro | C-014 | Tests de argv exacto; no hay shell ni flags arbitrarios |
 | `C-016` | 1 | P1 | Resolución de salida y validador | C-011, C-015 | Duplicados, temporal, duración, streams y rename atómico |
 | `C-017` | 1 | P1 | Fixtures multimedia pequeños y reproducibles | C-010 | Se generan con FFmpeg o se versionan con licencia compatible |
 | `C-020` | 2 | P1 | Localizador y diagnóstico de FFmpeg del sistema | C-010 | Versión, ffprobe, encoders y errores accionables |
 | `C-021` | 2 | P1 | Runner de procesos y parser de progreso | C-020, C-015 | Progreso, ETA, pausa, cancelación y cierre de grupo |
-| `C-030` | 2 | P1 | Esquema SQLite, migraciones y reservas | C-011 | WAL, migraciones idempotentes y backup recuperable |
+| `C-030` | 2 | P1 | Esquema SQLite y migraciones según `data-model.md` | C-011 | WAL, migraciones idempotentes y backup recuperable |
 | `C-031` | 2 | P1 | Máquina de estados y scheduler | C-016, C-021, C-030 | Transiciones, concurrencia, recuperación y reintento |
-| `C-032` | 2 | P1 | Daemon e IPC JSON-RPC | C-031 | Métodos/eventos del ADR; socket 0600; reconexión |
+| `C-032` | 2 | P1 | Daemon e IPC JSON-RPC según `contracts.md` | C-031 | Métodos/eventos/errores del contrato; socket 0600; reconexión |
 | `C-033` | 2 | P1 | Socket y servicio systemd de usuario | C-032 | La GUI activa el daemon y las conversiones siguen al cerrar la GUI |
-| `C-040` | 3 | P2 | Shell GTK4/Libadwaita y cliente del daemon | C-032, C-033 | Abre, conecta, reconecta y muestra estado sin bloquear |
+| `C-040` | 3 | P2 | Shell GTK4/Libadwaita según `ui-mvp.md` | C-032, C-033 | Abre, conecta, reconecta y muestra estado sin bloquear |
 | `C-041` | 3 | P2 | Página Convertir | C-040, C-012, C-013, C-014 | Añadir archivos/carpetas, inspeccionar, elegir preset y encolar |
 | `C-042` | 3 | P2 | Página Cola | C-040, C-031 | Progreso, pausa, reanudar, cancelar, reintentar y eliminar |
 | `C-043` | 3 | P2 | Presets, Diagnóstico y Ajustes | C-040 | Catálogo legible, FFmpeg/CPU/disco, tema/idioma/concurrencia |

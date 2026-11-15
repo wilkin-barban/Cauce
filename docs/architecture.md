@@ -5,7 +5,7 @@
 **Fecha:** 2026-11-14  
 **Alcance:** Ubuntu 26.04 LTS, arquitectura amd64  
 **Nombre del producto:** Cauce  
-**Licencia propuesta:** GPL-3.0-or-later
+**Licencia:** GPL-3.0-or-later
 
 ## 1. Resultado esperado
 
@@ -26,9 +26,10 @@ La primera entrega será un **MVP enfocado en convertir, encolar y aplicar prese
 | Proceso | Daemon + GUI | Las conversiones y la cola sobreviven al cierre de la ventana |
 | Persistencia | SQLite WAL | Recuperación, historial mínimo y estado duradero |
 | IPC | JSON-RPC 2.0 sobre socket Unix | Contrato explícito, comprobable y sin shell |
-| Licencia | GPL-3.0-or-later | Coherente con Segmenta y con un ecosistema abierto |
-
-La licencia queda como decisión ratificable antes de publicar; si se elige MIT, el resto de la arquitectura no cambia.
+| Presets MVP | Los 13 del sistema | Paridad inicial; personalizados en v0.2 |
+| Flujo de GUI | Añadir a cola y luego iniciar | Revisión segura antes de ejecutar |
+| CLI v0.1 | Solo interna | Diagnóstico y pruebas sin contrato público |
+| Licencia | GPL-3.0-or-later (ratificada) | Coherente con Segmenta y con un ecosistema abierto |
 
 ## 3. Alcance del MVP v0.1
 
@@ -404,13 +405,17 @@ El paquete se construye con `cargo-deb` y pasa una puerta de empaquetado que val
 
 ## 20. Decisiones abiertas
 
-1. Ratificar **GPL-3.0-or-later** antes de publicar la primera release.
-2. Confirmar si `cauce-cli` se publica en v0.1 o queda como herramienta interna.
-3. Definir la política exacta de notificaciones del escritorio.
-4. Confirmar el catálogo inicial de 13 presets y sus nombres localizados.
+1. Crear `LICENSE` y `NOTICE` con la licencia ratificada.
+2. Definir la política exacta de notificaciones del escritorio.
+3. Ratificar los nombres localizados del catálogo de 13 presets antes de traducir PT-BR.
 
 ## 21. ADRs y backlog
 
-Las decisiones estructurales están registradas en [`adr/`](adr/) y el trabajo se desglosa en [`backlog.md`](backlog.md). La matriz de paridad y el estado de cada función están en [`parity.md`](parity.md).
+Las decisiones estructurales están registradas en [`adr/`](adr/). Los contratos operativos están en:
 
-Los ADRs aceptados son normativos; cualquier cambio de decisión requiere uno nuevo que lo reemplace.
+- [`contracts.md`](contracts.md) — tipos, estados, IPC y errores.
+- [`presets.md`](presets.md) — catálogo canónico de los 13 presets.
+- [`data-model.md`](data-model.md) — SQLite, transacciones y recuperación.
+- [`ui-mvp.md`](ui-mvp.md) — flujo y estados de la GUI MVP.
+
+El trabajo se desglosa en [`backlog.md`](backlog.md) y la paridad está en [`parity.md`](parity.md). Los ADRs aceptados son normativos; cualquier cambio de decisión requiere uno nuevo que lo reemplace.

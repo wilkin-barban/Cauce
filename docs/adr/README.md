@@ -9,7 +9,7 @@ Los ADRs registran decisiones que cambian la arquitectura o el contrato del prod
 | [0003](0003-gtk4-libadwaita.md) | Interfaz GTK4/Libadwaita | Aceptado |
 | [0004](0004-sqlite-wal.md) | Persistencia con SQLite WAL | Aceptado |
 | [0005](0005-json-rpc-socket.md) | IPC JSON-RPC por socket Unix | Aceptado |
-| [0006](0006-licencia-gpl.md) | Licencia GPL-3.0-or-later | Propuesto |
+| [0006](0006-licencia-gpl.md) | Licencia GPL-3.0-or-later | Aceptado |
 
 ## Cuándo crear un ADR
 

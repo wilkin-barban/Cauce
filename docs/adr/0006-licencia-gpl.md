@@ -1,6 +1,6 @@
 # ADR 0006 — Licencia GPL-3.0-or-later
 
-- **Estado:** Propuesto, ratificar antes de la primera release
+- **Estado:** Aceptado (ratificado el 2026-11-14; `LICENSE`/`NOTICE` pendientes en C-001)
 - **Fecha:** 2026-11-14
 - **Decisores:** Wilkin Barban
 - **Ámbito:** licencia del código y distribución
@@ -9,7 +9,7 @@
 
 FF-Converter usa MIT. Segmenta usa GPL-3.0-or-later. Cauce es una implementación nueva que puede reutilizar ideas y contratos del proyecto MIT, y usa FFmpeg del sistema (proceso separado).
 
-## Decisión propuesta
+## Decisión
 
 Publicar Cauce bajo **GPL-3.0-or-later** y conservar la atribución del código MIT reutilizado en un archivo `NOTICE`.
 
@@ -25,7 +25,7 @@ Publicar Cauce bajo **GPL-3.0-or-later** y conservar la atribución del código 
 - Existe un archivo `LICENSE` con el texto GPL-3.0.
 - `NOTICE` enumera cualquier código MIT reutilizado.
 - La release declara la licencia y las obligaciones de terceros.
-- La decisión se ratifica antes de publicar v0.1.
+- La decisión está ratificada; falta materializarla en `LICENSE` y `NOTICE`.
 
 ## Alternativa
 
