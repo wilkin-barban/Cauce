@@ -22,8 +22,9 @@ pub fn tick(daemon: &Daemon, config: &OrchestratorConfig) -> Result<Option<Strin
 
 /// Reaps and judges every conversion whose process already ended.
 fn finish_finished(daemon: &Daemon, config: &OrchestratorConfig) {
-    for (id, running) in take_finished(daemon) {
-        if let Err(error) = finish_one(daemon, config, &id, running) {
+    for finished in take_finished(daemon) {
+        let id = finished.id.clone();
+        if let Err(error) = finish_one(daemon, config, finished) {
             daemon.events().log(
                 "error",
                 "queue",
@@ -33,26 +34,54 @@ fn finish_finished(daemon: &Daemon, config: &OrchestratorConfig) {
     }
 }
 
-/// Removes the finished children from the map, so nothing waits on them twice.
-fn take_finished(daemon: &Daemon) -> Vec<(String, RunningJob)> {
+/// One child that left the map, plus what the non-blocking status check saw.
+struct Finished {
+    id: String,
+    running: RunningJob,
+    /// Set when polling the child failed; the job is failed, never waited on.
+    error: Option<JobError>,
+}
+
+/// Removes the finished children from the map, so nothing ends them twice.
+///
+/// `try_exit` is the source of truth and never blocks: it reaps the child as
+/// soon as the OS reports the exit, so a converter that closed stderr early
+/// finishes even though no [`StreamEnd`] marker ever fires. The marker remains
+/// the fast path for the common case; both arrive here and the handle leaves the
+/// map exactly once, which is what makes publishing and failing idempotent.
+fn take_finished(daemon: &Daemon) -> Vec<Finished> {
     let mut children = daemon.children();
-    let done: Vec<String> = children
-        .iter()
-        .filter(|(_, running)| running.exited.load(Ordering::SeqCst))
-        .map(|(id, _)| id.clone())
-        .collect();
+    let mut done: Vec<(String, Option<JobError>)> = Vec::new();
+    for (id, running) in children.iter_mut() {
+        match running.child.try_exit() {
+            Ok(None) => {}
+            Ok(Some(_)) => done.push((id.clone(), None)),
+            // A status check that failed also ends the job: retrying it every
+            // tick would pin the work in `running` forever.
+            Err(error) => done.push((id.clone(), Some(error))),
+        }
+    }
     done.into_iter()
-        .filter_map(|id| children.remove(&id).map(|running| (id, running)))
+        .filter_map(|(id, error)| {
+            children
+                .remove(&id)
+                .map(|running| Finished { id, running, error })
+        })
         .collect()
 }
 
 fn finish_one(
     daemon: &Daemon,
     config: &OrchestratorConfig,
-    id: &str,
-    mut running: RunningJob,
+    finished: Finished,
 ) -> Result<(), JobError> {
-    // The process is gone, so `wait` only reaps and joins the reader threads.
+    let id = finished.id.as_str();
+    let mut running = finished.running;
+    if let Some(error) = finished.error {
+        return fail(daemon, id, &error);
+    }
+    // The child is already reaped and its reader threads are joined or detached,
+    // so `wait` only reports the cached status and never blocks the tick.
     match running.child.wait() {
         Ok(_) => publish(daemon, config, id),
         Err(error) => fail(daemon, id, &error),
