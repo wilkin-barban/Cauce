@@ -7,5 +7,7 @@
 pub mod migrations;
 pub mod sql;
 pub mod sql_support;
+pub mod store;
 
 pub use migrations::{MIGRATIONS, Migration, run_migrations};
+pub use store::Store;
