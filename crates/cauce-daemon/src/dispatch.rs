@@ -118,6 +118,7 @@ impl Daemon {
             "jobs.retry" => self.job_action(params, JobAction::Retry),
             "jobs.recover" => self.jobs_recover(params),
             "jobs.remove" => self.jobs_remove(params),
+            "jobs.clear_finished" => self.jobs_clear_finished(),
             "queue.pause" => self.set_queue(true),
             // `queue.start` is the explicit alias of `queue.resume`: one handler,
             // so there is no second path that could start a job twice.
@@ -501,6 +502,25 @@ impl Daemon {
         if removed {
             self.events
                 .log("info", "queue", format!("trabajo `{id}` eliminado"));
+        }
+        broadcast_queue(self);
+        Ok(json!({"removed": removed}))
+    }
+
+    /// `jobs.clear_finished`: one transaction deletes every finished job with its
+    /// events and reservation and answers `{removed: N}` (`docs/contracts.md` §6).
+    ///
+    /// The store owns the state list, so the GUI never loops `jobs.remove`. The
+    /// single `queue.updated` is the whole event traffic: a deletion is not a
+    /// `job.updated`, because the job no longer exists to carry one.
+    fn jobs_clear_finished(&self) -> Result<Value, JobError> {
+        let removed = self.store_mut().clear_finished()?;
+        if removed > 0 {
+            self.events.log(
+                "info",
+                "queue",
+                format!("{removed} trabajos terminados eliminados de la cola"),
+            );
         }
         broadcast_queue(self);
         Ok(json!({"removed": removed}))

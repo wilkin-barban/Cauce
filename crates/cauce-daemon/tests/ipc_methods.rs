@@ -843,3 +843,78 @@ fn assert_output(case: &mut Case, id: &str, video: &str, audio: &str, container:
         "la duración se conserva: {duration} ms"
     );
 }
+
+// The bulk clear of `docs/contracts.md` §6: one transaction, one event, no
+// per-job traffic.
+
+#[test]
+fn jobs_clear_finished_over_ipc() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("jobs-clear-finished");
+    let finished = case.add_one_job(&fixture, "system-smarttv-compat");
+    let waiting = case.add_one_job(&fixture, "system-smarttv-compat");
+    let finished_id = finished["id"].as_str().expect("id").to_owned();
+    let waiting_id = waiting["id"].as_str().expect("id").to_owned();
+    {
+        let mut store = case.daemon.store_mut();
+        for state in [
+            JobState::Probing,
+            JobState::Running,
+            JobState::Validating,
+            JobState::Completed,
+        ] {
+            store
+                .transition(&finished_id, state, "tests")
+                .expect("sembrar el trabajo terminado");
+        }
+    }
+    // The two `job.updated` events of `jobs.add` are already buffered; draining
+    // them keeps the count below about the clear alone.
+    case.client.pending_events();
+
+    let (cleared, mut events) = case
+        .client
+        .call_with_events("jobs.clear_finished", json!({}));
+    assert!(cleared.get("error").is_none(), "{cleared}");
+    assert_eq!(
+        cleared["result"],
+        json!({"removed": 1}),
+        "solo el trabajo terminado"
+    );
+    events.extend(case.client.pending_events());
+    assert_eq!(
+        broadcasts(&events),
+        1,
+        "un único `queue.updated`: {events:?}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["method"] == json!("job.updated"))
+            .count(),
+        0,
+        "borrar no emite un evento por trabajo: {events:?}"
+    );
+
+    let listed = listed(&case.client.result("jobs.list", json!({})));
+    assert_eq!(
+        listed,
+        vec![(waiting_id, "queued".to_owned())],
+        "el trabajo en espera sigue en la cola"
+    );
+    assert_eq!(
+        case.client
+            .error_code("jobs.get", json!({"id": finished_id})),
+        "INVALID_INPUT",
+        "el terminado ya no existe"
+    );
+
+    let again = case.client.result("jobs.clear_finished", json!({}));
+    assert_eq!(
+        again,
+        json!({"removed": 0}),
+        "sin terminados la limpieza borra cero"
+    );
+}
