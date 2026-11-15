@@ -475,3 +475,16 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Smoke real (no in-process): daemon arrancado desde `target/debug/cauce-daemon` con `XDG_RUNTIME_DIR` temporal → socket `0600` en directorio `0700`; `initialize` → `protocol_version: 1`; `system.capabilities` → FFmpeg 8.0.1, `ffmpeg_missing: []`, 6 núcleos; `jobs.add` con un fixture real → `queued → running → validating → completed`, salida de 53 286 B publicada; `SIGTERM` → **exit 0** y socket eliminado.
 - Recuperación tras reinicio y `SO_PEERCRED` cubiertas por tests (`marks_active_jobs_interrupted_on_recovery`, `peer_uid_matches_the_test_process`).
 - La GUI no se tocó: sigue siendo `fn main() {}`.
+
+**L23 (endurecimiento del runner, pedido del usuario) — dos huecos cerrados:**
+- **Pausa/reanudación sobre un hijo vivo**: `pause_freezes_and_resume_continues_a_live_child`. El fake escribe una línea cada 20 ms; el test verifica con polling acotado que el contador deja de crecer tras `pause` y vuelve a crecer tras `resume`. Observado: 5 líneas al pausar, 5 tras 250 ms en pausa, 6 al reanudar. Sonda negativa: quitando `SIGSTOP` de `pause()`, el test falla con `the counter kept growing while paused: 5 -> 14 lines`.
+- **Watchdog de salida**: `ConversionChild::try_exit()` no bloqueante (`try_wait` + caché + liberación de hilos, sin zombis). El orquestador ahora completa o falla el trabajo desde el estado de salida en cada tick, aunque el marcador `StreamEnd` nunca llegue; ambos caminos son idempotentes (3 ticks extra tras el fallo dejan un solo `failed`). Tests: `reports_exit_even_when_stderr_closes_early`, `try_exit_is_non_blocking_for_a_running_child`, `a_converter_that_closes_stderr_does_not_hang_the_queue` (el segundo trabajo de la cola arranca igual).
+- Nota del worker: el script literal `exec 2>&-; exit 0` ya disparaba el marcador (EOF de stderr); el caso realmente bloqueante es un hijo que mantiene stderr abierto y muere, y ese es el que cubre el test del daemon.
+- Deuda aceptada: `RunningJob.exited` queda escrito pero ya no decide el completado (el marcador es solo camino rápido); ningún test lo lee.
+- Corte: 60 · 42 · 103 · 109. Suite **198/198**.
+
+**L24 (decisión documentada) — pausa de cola al reiniciar el daemon:**
+- La pausa de cola vive en memoria (`AtomicBool` del daemon). **Al reiniciar el daemon la cola vuelve a estar activa**: no se persiste en `settings` y no se reanuda ningún trabajo por sí solo.
+- Los trabajos que estaban `probing|running|paused|validating` pasan a `interrupted` con evento `recovery` (`data-model.md` §4) y **no se reencolan automáticamente**: la UI debe ofrecer "Reencolar", que es la acción `Recover` de la máquina de estados.
+- Los `queued` siguen `queued` y el scheduler los toma en el primer tick si la cola está activa.
+- Consecuencia de UX: si el usuario pausó la cola y reinicia el daemon, la conversión de los pendientes vuelve a arrancar. Persistir el flag en `settings` queda para una fase posterior; no contradice ninguna spec y está anotado en `## Log`.
