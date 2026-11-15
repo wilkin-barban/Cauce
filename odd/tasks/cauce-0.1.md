@@ -768,3 +768,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Defecto observado en esa captura**: la palabra "Personalizado" aparece **tres veces** (encabezado de la sección, ítem de la lista y título del detalle) y la frase "Un solo preset propio: al guardar reemplaza al anterior." dos veces. Es duplicación de jerarquía, no funcional; queda anotada para una unidad de presentación.
 - **`08-error-daemon.png`** (1440×900): error **real** provocado deteniendo `cauce.socket`/`cauce.service`. Banner "No se pudo conectar con el daemon." con acción Reconectar y pie "Daemon: sin conexión". **Ningún `ErrorCode` crudo a la vista**: el detalle técnico vive en el desplegable, cerrado por defecto. La captura prueba el mensaje humano; no muestra el desplegable expandido.
 - No se tocó código en esta pasada y **no se reconstruyó el paquete**: sigue el instalado (`sha256 3b4183ccf33737bd42c3ca834e52ca35c99bab056fc6fb154d2b56568750beb9`).
+
+**L57 (deduplicación del editor) — corregida, recapturada y en paquete nuevo:**
+- El panel de detalle del personalizado tiene **un solo título** y **una sola descripción**: `custom_headers()` es la única fuente del par (título, pista) y `custom_editor_heading()` devuelve `(None, None)` para que el grupo de campos no repita encabezado. Antes el `PreferencesGroup` del editor redibujaba lo que ya ponía el panel.
+- La fila de la lista usa **"Mi preset" / "My preset" / "Meu preset"** (`presets.custom_row_name`); el chip y el encabezado de categoría siguen diciendo "Personalizado".
+- Test `custom_detail_has_one_title_and_one_description`. Suite **296/296**; `fmt` y `clippy -D warnings` limpios.
+- **`07-presets-custom.png` recapturada y verificada**: chip Personalizado activo, fila "Mi preset", título de detalle "Mi preset" una sola vez, descripción una sola vez, los siete campos y Guardar/Borrar. El clic se validó comparando el frame previo (`CAMBIO_OK`).
+- **Paquete nuevo**: `sha256 15438697a20ea9bc663b3a7ce5936d9332b3b4142519de2009a111e39828877d`, instalado (`dpkg 0.1.0-1`) con `cauce.socket` **active**.
