@@ -570,3 +570,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Recorte ampliado del píxel (`/tmp/crop.png`): ✖ en negrita, 12×12, justo debajo del borde inferior del `GtkDropDown` de preset y alineado con su área de valor.
 - **Conclusión**: el glifo lo dibuja algún widget interno del `GtkDropDown` cuyo estado no expone el árbol público en el momento de la captura. No lo detecta ningún test y no afecta funcionalidad medida.
 - **Decisión pedida al usuario** (no se avanzó sin ella, según la instrucción de no expandir alcance): (a) autorizar una unidad acotada que reemplace el `GtkDropDown` de preset por `AdwComboRow` en `crates/cauce-gui/src/pages/convert/view.rs` y elimine el artefacto por construcción, con test de que la fila de preset no añade imágenes fuera de su contenedor; o (b) aceptarlo como deuda cosmética registrada para v0.1.
+
+**L34 (el ✖ resuelto) — era el cursor X, no la UI:**
+- Tres hipótesis refutadas con evidencia antes de tocar nada más: no era el banner (aparece igual con el daemon caído), no era una imagen del tema (el volcado del árbol solo lista las tres imágenes de control de ventana) y no era el desplegable (persistió tras cambiarlo por `AdwComboRow`).
+- Prueba definitiva: `GtkWidget::pick(720, 455)` devuelve el `GtkBox` de la página, sin ningún hijo en ese punto, o sea que **ningún widget dibujaba ese píxel**. El glifo era el **cursor X por defecto** (`X_cursor`) que Xvfb deja inmóvil en pantalla.
+- Corrección: la captura usa `ffmpeg -draw_mouse 0`. La captura nueva (`odd/cauce-g3.png`) ya no tiene el glifo.
+- Consecuencia: el cambio a `AdwComboRow` se mantiene porque simplifica la fila (el combo es la fila, sin `AdwActionRow` con sufijo) y su test garantiza que la página no mapea glifos prohibidos. **No era la causa** y así queda registrado, para no vender un arreglo que no lo fue.
+- Lección para la puerta G3: capturar con `-draw_mouse 0` desde el principio; el cursor del servidor X contamina la evidencia visual.
