@@ -4,10 +4,14 @@
 //! The socket lives in `$XDG_RUNTIME_DIR/cauce/`, the folder is `0700` and the
 //! socket itself `0600`. A stale socket is only removed after proving that
 //! nothing answers on it, so two daemons can never silently steal the path.
+//!
+//! The packaged daemon is socket activated: `cauce.socket` already listens and
+//! systemd hands that descriptor over, so [`listener`] adopts FD 3 instead of
+//! binding the path again. Binding there is the development fallback only.
 
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
 
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
@@ -20,6 +24,10 @@ const DATABASE_NAME: &str = "cauce.db";
 pub const DIR_MODE: u32 = 0o700;
 /// Only the owner may connect.
 pub const SOCKET_MODE: u32 = 0o600;
+/// `SD_LISTEN_FDS_START` from `sd-daemon.h`: the first descriptor that systemd
+/// passes to an activated service, since `0`, `1` and `2` are always
+/// stdin/stdout/stderr. `LISTEN_FDS` counts the descriptors that follow it.
+pub const SD_LISTEN_FDS_START: i32 = 3;
 
 /// One decoded line, or a frame that blew past the limit.
 #[derive(Debug, PartialEq, Eq)]
@@ -84,6 +92,108 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
             .create(dir)?;
     }
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE))
+}
+
+/// Where the listener came from, which decides who owns the socket file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenerKind {
+    /// Inherited from systemd socket activation: systemd created the socket,
+    /// owns the path and closes it when `cauce.socket` stops. The daemon must
+    /// neither bind nor unlink it, or the next activation finds a dead path.
+    Inherited,
+    /// Bound by the daemon itself (development): the daemon owns the file and
+    /// removes it on shutdown.
+    Bound(PathBuf),
+}
+
+impl ListenerKind {
+    /// Name of the mode, for the one startup line an operator reads.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Inherited => "socket activation",
+            Self::Bound(_) => "bind",
+        }
+    }
+
+    /// Path to unlink on shutdown, and only when the daemon created it.
+    pub fn owned_path(&self) -> Option<&Path> {
+        match self {
+            Self::Inherited => None,
+            Self::Bound(path) => Some(path),
+        }
+    }
+}
+
+/// Number of descriptors systemd passed to us, from `LISTEN_PID`/`LISTEN_FDS`.
+///
+/// `None` means "not socket activated": the variables are missing, malformed,
+/// `0` or addressed to another pid, and the caller falls back to [`bind`]. It
+/// never panics on a hostile or truncated environment.
+pub fn listen_fds_from_env() -> Option<u32> {
+    inherited_fds(
+        std::env::var("LISTEN_PID").ok(),
+        std::env::var("LISTEN_FDS").ok(),
+        std::process::id(),
+    )
+}
+
+/// The parser behind [`listen_fds_from_env`], with the values passed in so a
+/// test drives every case without touching the process environment.
+fn inherited_fds(listen_pid: Option<String>, listen_fds: Option<String>, pid: u32) -> Option<u32> {
+    let announced_pid: u32 = listen_pid?.trim().parse().ok()?;
+    if announced_pid != pid {
+        // `LISTEN_PID` names the process the descriptors were meant for; a
+        // mismatch means they belong to someone else and must not be adopted.
+        return None;
+    }
+    let fds: u32 = listen_fds?.trim().parse().ok()?;
+    if fds == 0 { None } else { Some(fds) }
+}
+
+/// Adopts the listening socket systemd passed as FD [`SD_LISTEN_FDS_START`].
+///
+/// `pid` and `fds` are exactly what [`listen_fds_from_env`] reported, so the
+/// same validation runs again on the values instead of the environment.
+/// `None` means "not activated, or FD 3 is not a usable listener".
+///
+/// Must run inside a `tokio` runtime: `UnixListener::from_std` registers the
+/// socket with the reactor.
+pub fn inherited_listener(pid: u32, fds: u32) -> Option<UnixListener> {
+    if pid != std::process::id() || fds == 0 {
+        return None;
+    }
+    // SAFETY: systemd's contract (`sd_listen_fds(3)`) guarantees that FD 3 is
+    // an open, listening Unix socket that belongs to this process, and that the
+    // descriptor is handed over exactly once. Taking ownership here is that
+    // single handover; nothing else in the daemon closes FD 3.
+    let inherited = unsafe { std::os::unix::net::UnixListener::from_raw_fd(SD_LISTEN_FDS_START) };
+    // systemd passes blocking descriptors unless the unit asks otherwise, and
+    // `tokio` requires a non-blocking socket.
+    inherited.set_nonblocking(true).ok()?;
+    UnixListener::from_std(inherited).ok()
+}
+
+/// Resolves the listener: systemd's inherited descriptor or a self-bound path.
+pub async fn listener() -> io::Result<(UnixListener, ListenerKind)> {
+    if let Some(fds) = listen_fds_from_env() {
+        let inherited = inherited_listener(std::process::id(), fds).ok_or_else(|| {
+            io::Error::other(format!(
+                "socket activation: systemd anunció {fds} descriptor(es) pero el \
+                 descriptor {SD_LISTEN_FDS_START} no es un socket en escucha"
+            ))
+        })?;
+        return Ok((inherited, ListenerKind::Inherited));
+    }
+    let path = socket_path();
+    let bound = bind(&path).await?;
+    Ok((bound, ListenerKind::Bound(path)))
+}
+
+/// Releases a listener's socket file, but only the one the daemon created.
+pub fn release(kind: &ListenerKind) {
+    if let Some(path) = kind.owned_path() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Binds `path` as a `0600` socket, creating its folder as `0700` if needed.
