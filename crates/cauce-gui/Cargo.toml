@@ -5,3 +5,22 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Cauce native GTK4 and Libadwaita desktop interface"
+
+[dependencies]
+cauce-core = { path = "../cauce-core" }
+# System GTK 4.22 and libadwaita 1.9 (`docs/architecture.md` §13). No vendored
+# or bundled feature: the `.deb` links against the distribution libraries.
+gtk4 = "0.11"
+libadwaita = { version = "0.9", features = ["v1_9"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# IPC only: the runtime keeps socket I/O off the GTK main thread and the
+# channels are what `glib::spawn_future_local` awaits (`docs/ui-mvp.md` §12).
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+] }
+async-channel = "2"
