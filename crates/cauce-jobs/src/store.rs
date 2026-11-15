@@ -20,7 +20,7 @@ const BUSY_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Debug)]
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -59,8 +59,6 @@ impl Store {
             .map_err(|error| sql_error(error, "leer la versión del esquema"))?;
         Ok(version.map_or(0, |value| u32::try_from(value).unwrap_or(0)))
     }
-
-    /// Inserts the job, its output reservation and its creation event atomically
 
     /// Reads the `settings` table and validates it through `Settings`' serde
     /// contract; keys that were never written fall back to their defaults.

@@ -4,6 +4,8 @@
 //! schema, the transactional migrations and the job/output-reservation writes;
 //! the domain types themselves live in `cauce-core` and never see SQLite.
 
+pub mod codec;
+pub mod job_store;
 pub mod migrations;
 pub mod sql;
 pub mod sql_support;
