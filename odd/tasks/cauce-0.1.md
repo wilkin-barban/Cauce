@@ -762,3 +762,9 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
   2. **Estado de error real sin captura**: requiere forzar un fallo verdadero (archivo inválido o ruta denegada); no se simuló.
   3. **`drag-over`**: no capturable sin origen de arrastre real en Xvfb; queda cubierto por test.
 - **Paquete nuevo**: `target/debian/cauce_0.1.0-1_amd64.deb`, **sha256 `3b4183ccf33737bd42c3ca834e52ca35c99bab056fc6fb154d2b56568750beb9`**, instalado en el host de QA y `cauce.socket` reiniciado.
+
+**L56 (dos capturas finales) — editor del personalizado y error real:**
+- **`07-presets-custom.png`** (1440×900): chip **Personalizado** activo y editor compacto con Contenedor (MP4), Código de video (h264), Calidad (CRF/Alta), Resolución (Original), Código de audio (aac), Bitrate (192 kbps), Subtítulos (Conservar) y las acciones Guardar/Borrar. Verificado a ojo.
+- **Defecto observado en esa captura**: la palabra "Personalizado" aparece **tres veces** (encabezado de la sección, ítem de la lista y título del detalle) y la frase "Un solo preset propio: al guardar reemplaza al anterior." dos veces. Es duplicación de jerarquía, no funcional; queda anotada para una unidad de presentación.
+- **`08-error-daemon.png`** (1440×900): error **real** provocado deteniendo `cauce.socket`/`cauce.service`. Banner "No se pudo conectar con el daemon." con acción Reconectar y pie "Daemon: sin conexión". **Ningún `ErrorCode` crudo a la vista**: el detalle técnico vive en el desplegable, cerrado por defecto. La captura prueba el mensaje humano; no muestra el desplegable expandido.
+- No se tocó código en esta pasada y **no se reconstruyó el paquete**: sigue el instalado (`sha256 3b4183ccf33737bd42c3ca834e52ca35c99bab056fc6fb154d2b56568750beb9`).
