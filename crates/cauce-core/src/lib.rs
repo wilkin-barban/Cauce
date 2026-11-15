@@ -3,6 +3,7 @@
 //! This crate knows nothing about GTK, sockets, SQLite or child processes.
 
 pub mod catalog;
+pub mod command;
 pub mod compat;
 pub mod error;
 pub mod job;
@@ -16,6 +17,7 @@ pub mod time;
 mod validate;
 
 pub use catalog::system_presets;
+pub use command::build_ffmpeg_args;
 pub use compat::plan_conversion;
 pub use error::{ErrorCode, JobError};
 pub use job::{Job, JobState, Progress};
