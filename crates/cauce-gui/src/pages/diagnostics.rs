@@ -122,7 +122,6 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
 
 fn build() -> Ui {
     let refresh = gtk::Button::with_label(t("diagnostics.refresh"));
-    refresh.add_css_class("flat");
     let copy = gtk::Button::with_label(t("diagnostics.copy_report"));
     copy.add_css_class("suggested-action");
 
@@ -131,11 +130,15 @@ fn build() -> Ui {
         t("section.diagnostics_title"),
         "",
     )));
-    header.pack_start(&refresh);
-    header.pack_end(&copy);
+    // Both actions share one end slot and one baseline: packing one at each side
+    // made "Actualizar" look like plain text next to the raised button (`L43`).
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    actions.append(&refresh);
+    actions.append(&copy);
+    header.pack_end(&actions);
 
     let loading = adw::StatusPage::new();
-    loading.set_icon_name(Some("utilities-system-monitor-symbolic"));
+    loading.set_icon_name(Some("applications-system-symbolic"));
     loading.set_title(t("diagnostics.loading_title"));
     loading.set_description(Some(t("diagnostics.loading_description")));
 

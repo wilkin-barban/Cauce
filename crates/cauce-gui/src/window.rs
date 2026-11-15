@@ -327,6 +327,10 @@ fn sidebar_row(title: &str, icon: &str) -> gtk::ListBoxRow {
     content.append(&gtk::Image::from_icon_name(icon));
     let label = gtk::Label::new(Some(title));
     label.set_xalign(0.0);
+    label.set_hexpand(true);
+    // One line, truncated: at the 200 px minimum sidebar a wrapped label would
+    // grow over the row and collide with its icon (`L43`).
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     content.append(&label);
     row.set_child(Some(&content));
     row

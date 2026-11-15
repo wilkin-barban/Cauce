@@ -75,14 +75,13 @@ pub fn group_presets(presets: &[Preset]) -> Vec<(String, Vec<&Preset>)> {
 /// Label/value rows of the detail pane. A field that the preset leaves unset
 /// produces no row at all, so nothing is ever shown as an empty value. The label
 /// is a catalog key: the row says whatever the current locale says.
+///
+/// The name is deliberately absent: the panel title already shows it, and the
+/// capture showed it twice (`odd/tasks/cauce-0.1.md`, L43).
 pub fn preset_detail(preset: &Preset) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = Vec::with_capacity(13);
     let mut push = |key: &'static str, value: String| rows.push((t(key).to_owned(), value));
 
-    push(
-        "presets.detail_name",
-        localized_preset_name(preset).to_owned(),
-    );
     push(
         "presets.detail_description",
         localized_preset_description(preset).to_owned(),
@@ -209,6 +208,9 @@ fn build() -> Ui {
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::Single);
     let sidebar = scrolled(&list);
+    // The list never scrolls sideways: a row is one line and the panel is narrow,
+    // so a horizontal cut would only hide the end of a name (`L43`).
+    sidebar.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
 
     let title = gtk::Label::new(None);
     title.add_css_class("title-2");
@@ -348,13 +350,18 @@ fn header_row(category: &str) -> gtk::ListBoxRow {
 
 fn preset_row(preset: &Preset) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&escaped(localized_preset_name(preset)));
+    let name = localized_preset_name(preset);
+    row.set_title(&escaped(name));
+    // One line per row: a wrapped title made the selected row taller than the rest
+    // and pushed the list out of alignment (`L43`).
+    row.set_title_lines(1);
     row.set_subtitle(&escaped(&format!(
         "{} · {}",
         preset.container.to_uppercase(),
         codec_summary(preset)
     )));
     row.set_subtitle_lines(1);
+    row.set_tooltip_text(Some(name));
     // The id is the row's widget name, so the selection handler needs no map.
     row.set_widget_name(&preset.id);
     row
