@@ -14,9 +14,12 @@
 //! Adding never starts anything: this page calls `jobs.add` and nothing else.
 //! `queue.resume` and `jobs.resume` belong to the Cola page (T17).
 
+pub mod flows;
 pub mod state;
+pub mod view;
 
 pub use state::{
     ConvertPhase, ConvertState, FFMPEG_COMMAND, QueueRequest, RejectedInput, base_name,
     expand_dropped_folder, plan_summary, summarize,
 };
+pub use view::{DROP_HINT, page};
