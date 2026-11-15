@@ -387,3 +387,75 @@ fn never_repeats_the_input_flag() {
         assert_eq!(argv.last().map(String::as_str), Some(TEMP), "{argv:?}");
     }
 }
+
+#[test]
+fn emits_annex_a_levels_for_encoders_that_take_them() {
+    // Verified against FFmpeg 8.0.1: libvpx-vp9 rejects `41` (exit 222) and
+    // accepts `4.1`, while libx264 accepts the Annex A string.
+    for encoder in ["libx264", "libvpx-vp9"] {
+        let conversion = plan(
+            video(StreamAction::Transcode, Some(encoder), Some(0)),
+            audio(StreamAction::Remove, None, None),
+            subs(SubtitleAction::Remove, None, None),
+        );
+        let mut conversion = conversion;
+        conversion.video.level = Some(41);
+
+        let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+        assert!(
+            pair(&argv, "-level", "4.1"),
+            "{encoder} must receive the Annex A level, got {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|arg| arg == "41"),
+            "{encoder} must never receive the raw level_idc: {argv:?}"
+        );
+    }
+}
+
+#[test]
+fn sends_the_x265_level_through_x265_params() {
+    let mut conversion = plan(
+        video(StreamAction::Transcode, Some("libx265"), Some(0)),
+        audio(StreamAction::Remove, None, None),
+        subs(SubtitleAction::Remove, None, None),
+    );
+    conversion.video.level = Some(41);
+
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    assert!(
+        pair(&argv, "-x265-params", "level-idc=41"),
+        "libx265 has no -level option, the level must travel in -x265-params: {argv:?}"
+    );
+    assert!(!argv.iter().any(|arg| arg == "-level"), "{argv:?}");
+}
+
+#[test]
+fn rejects_a_level_the_encoder_cannot_honor() {
+    // libsvtav1 accepts `-level` and ignores it, so v0.1 refuses instead of
+    // silently dropping the preset constraint.
+    let mut conversion = plan(
+        video(StreamAction::Transcode, Some("libsvtav1"), Some(0)),
+        audio(StreamAction::Remove, None, None),
+        subs(SubtitleAction::Remove, None, None),
+    );
+    conversion.video.level = Some(41);
+
+    let error =
+        build_ffmpeg_args(INPUT, TEMP, &conversion).expect_err("libsvtav1 cannot honor a level");
+    assert_eq!(error.code, ErrorCode::PlanInvalid);
+    assert!(error.message.contains("libsvtav1"), "{}", error.message);
+}
+
+#[test]
+fn rejects_an_unknown_level_idc() {
+    let mut conversion = plan(
+        video(StreamAction::Transcode, Some("libx264"), Some(0)),
+        audio(StreamAction::Remove, None, None),
+        subs(SubtitleAction::Remove, None, None),
+    );
+    conversion.video.level = Some(43);
+
+    let error = build_ffmpeg_args(INPUT, TEMP, &conversion).expect_err("43 is not a level_idc");
+    assert_eq!(error.code, ErrorCode::PlanInvalid);
+}

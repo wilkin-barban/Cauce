@@ -154,7 +154,12 @@ fn push_video(args: &mut Vec<String>, plan: &VideoPlan) -> Result<(), JobError> 
         StreamAction::Transcode => {
             let index = stream_index(plan.stream_index, "video")?;
             let encoder = check_encoder(plan.encoder.as_deref(), &VIDEO_ENCODERS, "video")?;
-            args.extend(["-map".to_string(), index, "-c:v".to_string(), encoder]);
+            args.extend([
+                "-map".to_string(),
+                index,
+                "-c:v".to_string(),
+                encoder.clone(),
+            ]);
             if let Some(quality) = plan.quality {
                 args.extend(["-crf".to_string(), quality.to_string()]);
             }
@@ -162,7 +167,7 @@ fn push_video(args: &mut Vec<String>, plan: &VideoPlan) -> Result<(), JobError> 
                 args.extend(["-profile:v".to_string(), profile.clone()]);
             }
             if let Some(level) = plan.level {
-                args.extend(["-level".to_string(), level.to_string()]);
+                push_level(args, &encoder, level)?;
             }
             if let Some(pixel_format) = &plan.pixel_format {
                 args.push("-pix_fmt".into());
@@ -171,6 +176,69 @@ fn push_video(args: &mut Vec<String>, plan: &VideoPlan) -> Result<(), JobError> 
         }
     }
     Ok(())
+}
+
+/// Emits the video level in the notation each encoder actually honors.
+///
+/// FFmpeg 8.0.1 exposes `-level` as an Annex A string for `libx264` and as a
+/// float for `libvpx-vp9`; `41` is rejected by libvpx ("out of range"). The
+/// libx265 wrapper has no level option (the level travels through
+/// `-x265-params level-idc=`), and libsvtav1 ignores `-level` silently, so a
+/// declared level is refused instead of quietly dropped.
+fn push_level(args: &mut Vec<String>, encoder: &str, level_idc: i32) -> Result<(), JobError> {
+    match encoder {
+        "libx264" | "libvpx-vp9" => {
+            let annex_a = annex_a_level(level_idc)?;
+            args.extend(["-level".to_string(), annex_a.to_owned()]);
+        }
+        "libx265" => {
+            if annex_a_level(level_idc).is_err() {
+                return Err(annex_a_level(level_idc).unwrap_err());
+            }
+            args.extend(["-x265-params".to_string(), format!("level-idc={level_idc}")]);
+        }
+        other => {
+            return Err(JobError::new(
+                ErrorCode::PlanInvalid,
+                format!("El encoder `{other}` no acepta niveles de vídeo en Cauce v0.1."),
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Converts an H.264/HEVC `level_idc` (41) into Annex A notation ("4.1").
+fn annex_a_level(level_idc: i32) -> Result<&'static str, JobError> {
+    let level = match level_idc {
+        10 => "1",
+        11 => "1.1",
+        12 => "1.2",
+        13 => "1.3",
+        20 => "2",
+        21 => "2.1",
+        22 => "2.2",
+        30 => "3",
+        31 => "3.1",
+        32 => "3.2",
+        40 => "4",
+        41 => "4.1",
+        42 => "4.2",
+        50 => "5",
+        51 => "5.1",
+        52 => "5.2",
+        60 => "6",
+        61 => "6.1",
+        62 => "6.2",
+        other => {
+            return Err(JobError::new(
+                ErrorCode::PlanInvalid,
+                format!("El nivel de vídeo `{other}` no es un level_idc válido."),
+                false,
+            ));
+        }
+    };
+    Ok(level)
 }
 
 fn push_audio(args: &mut Vec<String>, plan: &AudioPlan) -> Result<(), JobError> {
