@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cauce_core::JobError;
+use cauce_daemon::orchestrator::config_for;
 use cauce_daemon::socket;
-use cauce_daemon::{Daemon, serve};
+use cauce_daemon::{Daemon, serve, spawn_orchestrator};
 use cauce_jobs::Store;
 
 /// Set by the SIGINT/SIGTERM handler. `tokio` has no signal feature here, so the
@@ -48,6 +49,11 @@ async fn run() -> Result<(), String> {
         );
     }
 
+    // The scheduler owns every conversion: closing the GUI never stops a job
+    // (`docs/architecture.md` §2, S9).
+    let orchestrator =
+        spawn_orchestrator(Arc::clone(&daemon), config_for(&daemon).map_err(describe)?);
+
     let path = socket::socket_path();
     let listener = socket::bind(&path).await.map_err(describe_io)?;
     daemon.events().log(
@@ -62,6 +68,8 @@ async fn run() -> Result<(), String> {
         () = wait_for_signal() => {}
     }
 
+    // Dropping the task kills every FFmpeg process group (`docs/architecture.md` §18).
+    orchestrator.abort();
     serving.events().log("info", "daemon", "detenido por señal");
     let _ = std::fs::remove_file(&path);
     Ok(())
