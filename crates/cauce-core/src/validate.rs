@@ -32,3 +32,17 @@ where
         )))
     }
 }
+
+pub(crate) fn max_concurrent_jobs<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u8::deserialize(deserializer)?;
+    if (1..=8).contains(&value) {
+        Ok(value)
+    } else {
+        Err(de::Error::custom(format!(
+            "max_concurrent_jobs must be within 1..=8, got {value}"
+        )))
+    }
+}

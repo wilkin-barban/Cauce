@@ -6,6 +6,8 @@ pub mod error;
 pub mod job;
 pub mod media;
 pub mod plan;
+pub mod preset;
+pub mod settings;
 pub mod time;
 
 mod validate;
@@ -17,4 +19,6 @@ pub use plan::{
     AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
 };
+pub use preset::{DeviceFamily, HdrPolicy, Preset, SubtitlePolicy};
+pub use settings::{DuplicatePolicy, Language, Settings, Theme};
 pub use time::Timestamp;
