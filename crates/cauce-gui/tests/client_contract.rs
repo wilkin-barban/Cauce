@@ -373,3 +373,344 @@ fn a_timeout_does_not_poison_the_next_request() {
     assert_eq!(result["protocol_version"], json!(1));
     serving.join().expect("el servidor termina");
 }
+
+/// One blocking fake daemon: accepts a connection, reads the first request and
+/// hands `(request, stream)` to `serve`.
+fn fake_daemon(
+    socket: &std::path::Path,
+    serve: impl FnOnce(Value, std::os::unix::net::UnixStream) + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    let listener = std::os::unix::net::UnixListener::bind(socket).expect("bind del servidor");
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+
+        let (stream, _) = listener.accept().expect("aceptar la conexión");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .expect("plazo del servidor");
+        let mut reader = std::io::BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("leer la petición");
+        let request: Value = serde_json::from_str(&line).expect("petición JSON");
+        serve(request, reader.into_inner());
+    })
+}
+
+/// `docs/contracts.md` §5: one NDJSON message is at most 1 MiB.
+const MAX_LINE: usize = 1024 * 1024;
+
+/// Review finding R1-002: the event channel has a fixed capacity.
+const EXPECTED_EVENT_BUFFER: usize = 256;
+
+#[test]
+fn refuses_to_guess_the_socket_path() {
+    // Review finding R1-001: without an absolute `XDG_RUNTIME_DIR` the client
+    // must never fall back to a shared temp directory, where a local attacker
+    // could bind the socket first and impersonate the daemon.
+    let _guard = lock_env();
+    let previous = std::env::var_os("XDG_RUNTIME_DIR");
+    let runtime = runtime();
+    let client = Client::connect();
+
+    // SAFETY: the env guard makes this the only mutation in flight.
+    unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
+    let unset = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect_err("sin XDG_RUNTIME_DIR no hay socket que adivinar");
+    assert_eq!(unset.code, ErrorCode::DaemonUnavailable);
+    assert!(unset.retryable, "un runtime dir ausente es reintentable");
+    assert!(
+        unset.message.contains("XDG_RUNTIME_DIR"),
+        "el mensaje debe nombrar la variable como arreglo: {}",
+        unset.message
+    );
+    assert!(
+        !unset.message.contains("No se pudo conectar"),
+        "no debe intentarse ninguna conexión: {}",
+        unset.message
+    );
+
+    // SAFETY: see above.
+    unsafe { std::env::set_var("XDG_RUNTIME_DIR", "relative-run-dir") };
+    let relative = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect_err("una ruta relativa tampoco sirve");
+    assert_eq!(relative.code, ErrorCode::DaemonUnavailable);
+    assert!(relative.retryable, "una ruta relativa es reintentable");
+    assert!(
+        relative.message.contains("XDG_RUNTIME_DIR"),
+        "el mensaje debe nombrar la variable como arreglo: {}",
+        relative.message
+    );
+    assert!(
+        !relative.message.contains("No se pudo conectar"),
+        "no debe intentarse ninguna conexión: {}",
+        relative.message
+    );
+
+    match previous {
+        // SAFETY: see above.
+        Some(previous) => unsafe { std::env::set_var("XDG_RUNTIME_DIR", previous) },
+        None => unsafe { std::env::remove_var("XDG_RUNTIME_DIR") },
+    }
+}
+
+#[test]
+fn closes_the_connection_on_an_oversized_line() {
+    // Review finding R1-002: a line longer than the daemon's own 1 MiB limit
+    // closes the connection instead of growing the GUI's memory.
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("oversized-line");
+    let socket = dir.socket();
+    let server = fake_daemon(&socket, |_request, stream| {
+        use std::io::{Read, Write};
+
+        let mut stream = stream;
+        // 2 MiB sin salto de línea: el cliente debe cerrar al pasar el tope.
+        let oversized = vec![b'x'; 2 * MAX_LINE];
+        let _ = stream.write_all(&oversized);
+        let _ = stream.flush();
+        let mut rest = Vec::new();
+        // El cliente cierra su extremo: la lectura vuelve con 0 bytes.
+        let _ = stream.read_to_end(&mut rest);
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let events = client.events();
+    let error = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect_err("una línea sobredimensionada cierra la conexión");
+
+    assert_eq!(error.code, ErrorCode::DaemonUnavailable);
+    assert!(error.retryable, "una línea inválida es reintentable");
+    assert!(
+        error.message.contains("1 MiB"),
+        "el mensaje debe nombrar el tope: {}",
+        error.message
+    );
+
+    let disconnect = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .expect("el evento de desconexión llega a tiempo")
+            .expect("el canal sigue abierto")
+    });
+    assert_eq!(disconnect["method"], json!("daemon.disconnected"));
+    server.join().expect("el servidor termina");
+}
+
+#[test]
+fn event_buffer_is_bounded() {
+    // Review finding R1-002: the event channel drops the oldest event instead of
+    // growing without limit, so a chatty peer cannot exhaust the GUI's memory.
+    assert_eq!(
+        client::EVENT_BUFFER,
+        EXPECTED_EVENT_BUFFER,
+        "el tope publicado coincide con el del canal"
+    );
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("bounded-events");
+    let socket = dir.socket();
+    let (written, written_rx) = std::sync::mpsc::channel();
+    let server = fake_daemon(&socket, move |request, stream| {
+        use std::io::Write;
+
+        let mut stream = stream;
+        let reply = json!({
+            "jsonrpc": "2.0",
+            "id": request["id"].clone(),
+            "result": {"protocol_version": 1},
+        });
+        let mut frames = format!("{reply}\n");
+        for index in 0..(EXPECTED_EVENT_BUFFER * 2) {
+            let frame = json!({
+                "jsonrpc": "2.0",
+                "method": "job.progress",
+                "params": {"id": "job-1", "index": index},
+            });
+            frames.push_str(&format!("{frame}\n"));
+        }
+        stream.write_all(frames.as_bytes()).expect("los eventos");
+        stream.flush().expect("descarga");
+        let _ = written.send(());
+        // Se queda abierto para que el canal siga vivo durante el drenaje.
+        std::thread::sleep(Duration::from_secs(2));
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let events = client.events();
+    runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect("initialize responde antes de la inundación");
+    written_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("el servidor escribió los eventos");
+    std::thread::sleep(Duration::from_secs(1));
+
+    let mut count = 0;
+    while events.try_recv().is_ok() {
+        count += 1;
+    }
+    assert_eq!(
+        count,
+        client::EVENT_BUFFER,
+        "el canal conserva como máximo el tope y descarta lo viejo: {count}"
+    );
+    assert!(!events.is_closed(), "el receptor sigue vivo tras el tope");
+    let _ = server.join();
+}
+
+#[test]
+fn emits_a_disconnect_notification_when_the_daemon_closes() {
+    // Review findings R3-002 and R4-003: the reader announces the disconnect so
+    // the banner appears at once instead of waiting for the next `daemon.status`.
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("disconnect-event");
+    let socket = dir.socket();
+    let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind del servidor");
+    let server = std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Write};
+
+        let (stream, _) = listener.accept().expect("aceptar la conexión");
+        let mut reader = BufReader::new(stream);
+        let mut first = String::new();
+        reader.read_line(&mut first).expect("leer la petición");
+        let request: Value = serde_json::from_str(&first).expect("petición JSON");
+        let reply = json!({
+            "jsonrpc": "2.0",
+            "id": request["id"].clone(),
+            "result": {"protocol_version": 1},
+        });
+        reader
+            .get_mut()
+            .write_all(format!("{reply}\n").as_bytes())
+            .expect("respuesta");
+        reader.get_mut().flush().expect("descarga");
+        // Segunda petición: se cierra sin responder, como un daemon que cae.
+        let mut second = String::new();
+        reader
+            .read_line(&mut second)
+            .expect("leer la segunda petición");
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let events = client.events();
+    runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect("initialize responde");
+    let pending = runtime
+        .block_on(client.call("jobs.list", json!({})))
+        .expect_err("el daemon se cerró con la petición pendiente");
+    assert_eq!(pending.code, ErrorCode::DaemonUnavailable);
+    assert!(pending.retryable, "una desconexión es reintentable");
+
+    let notification = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .expect("la desconexión llega a tiempo")
+            .expect("el canal sigue abierto")
+    });
+    assert_eq!(notification["jsonrpc"], json!("2.0"));
+    assert_eq!(notification["method"], json!("daemon.disconnected"));
+    assert_eq!(notification["params"], json!({}));
+    assert!(
+        notification.get("id").is_none(),
+        "un evento no lleva id de petición: {notification}"
+    );
+    server.join().expect("el servidor termina");
+}
+
+#[test]
+fn a_stalled_open_times_out() {
+    // Review finding R4-001: opening the socket, writing and flushing share one
+    // deadline, so a listener that accepts and never reads cannot hang a call.
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("stalled-write");
+    let socket = dir.socket();
+    let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind del servidor");
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("aceptar la conexión");
+        // Nunca lee: el búfer del socket se llena y la escritura se bloquea.
+        std::thread::sleep(REQUEST_TIMEOUT + Duration::from_secs(5));
+        drop(stream);
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let started = Instant::now();
+    // 8 MiB de parámetros no caben en el búfer del socket.
+    let inputs: Vec<String> = (0..128).map(|_| "x".repeat(64 * 1024)).collect();
+    let error = runtime
+        .block_on(client.call("jobs.add", json!({"inputs": inputs})))
+        .expect_err("una escritura estancada debe vencer el plazo");
+    let elapsed = started.elapsed();
+
+    assert_eq!(error.code, ErrorCode::DaemonUnavailable);
+    assert!(error.retryable, "un plazo vencido es reintentable");
+    assert!(
+        elapsed < REQUEST_TIMEOUT + Duration::from_secs(2),
+        "la llamada debe rendirse en el plazo, tardó {elapsed:?}"
+    );
+    assert!(
+        error.message.contains("daemon"),
+        "mensaje en español que nombra el daemon: {}",
+        error.message
+    );
+    server.join().expect("el servidor termina");
+}
+
+#[test]
+fn a_discarded_connection_stops_reading() {
+    // Review finding R4-002: a discarded connection aborts its reader, so the
+    // socket really closes and no late notification survives the drop.
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("discarded-connection");
+    let socket = dir.socket();
+    let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind del servidor");
+    let server = std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Read, Write};
+
+        let (stream, _) = listener.accept().expect("aceptar la conexión");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .expect("plazo del servidor");
+        let mut reader = BufReader::new(stream);
+        let mut request = String::new();
+        reader.read_line(&mut request).expect("leer la petición");
+        // Nunca responde: el plazo del cliente descarta la conexión.
+        let mut rest = Vec::new();
+        let read = reader.read_to_end(&mut rest).expect("leer hasta el EOF");
+        // Notificación tardía: ningún lector debe quedar para recibirla.
+        let late = json!({
+            "jsonrpc": "2.0",
+            "method": "job.updated",
+            "params": {"id": "job-1"},
+        });
+        let _ = reader.get_mut().write_all(format!("{late}\n").as_bytes());
+        let _ = reader.get_mut().flush();
+        read
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let events = client.events();
+    let error = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect_err("sin respuesta vence el plazo");
+    assert_eq!(error.code, ErrorCode::DaemonUnavailable);
+
+    assert_eq!(
+        server.join().expect("el servidor termina"),
+        0,
+        "el servidor debe observar el EOF del cliente"
+    );
+    let late = runtime
+        .block_on(async { tokio::time::timeout(Duration::from_millis(500), events.recv()).await });
+    assert!(
+        late.is_err(),
+        "ninguna notificación tardía sobrevive al descarte: {late:?}"
+    );
+}
