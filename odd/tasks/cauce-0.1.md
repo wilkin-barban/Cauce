@@ -611,3 +611,11 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Primer intento falló con `PATH_DENIED` porque la carpeta de salida estaba en `/tmp`, fuera de la raíz autorizada (`$HOME`). **Es el comportamiento correcto**, no un bug: el script ahora escribe bajo `$HOME` y lo documenta.
 
 **L39 (decisión del usuario) — review nativa de T21/T22 y de T23-T25 omitida:** mismo criterio que T20. Las puertas reales son la evidencia: `check-package` ejecutado contra el `.deb` bueno y contra uno corrupto, instalación real con `dpkg`, `appstreamcli`, socket `0600`, cinco conversiones reales verificadas con `ffprobe` y el smoke GUI+daemon con `window-ready`. No se abre lineage para estos candidatos; queda registrado como decisión consciente.
+
+**L40 (QA visual del candidato exacto) — verificado hasta donde la automatización alcanza:**
+- **sha256 verificado dos veces**: el `.deb` local, el de `/tmp` en el QA host y el paquete efectivamente instalado coinciden en `22716d5194d0c76fc76cf75b53b533edfea6f969885b4c49a6904e26b3bacd8b`, y ese hash está en `docs/release-notes-0.1.0.md`.
+- **Clean install del paquete exacto**: `apt-get install --reinstall /tmp/cauce-rc.deb` → `ii cauce 0.1.0-1` con la descripción ya correcta ("Cauce: native media converter (daemon, GUI and CLI)").
+- **Daemon y GUI instalados** (`/usr/bin/cauce-daemon`, `/usr/bin/cauce-gui`) sobre Xvfb 1440×900: socket `srw-------` (0600) y ventana abierta.
+- **Captura `odd/screenshots/01-convertir.png`**: sidebar con las cinco secciones, Convertir con drop zone, Destino, preset real (`AdwComboRow`) con su descripción, botón "Añadir a la cola" y pie "Daemon: conectado". Una sola barra de título: sin controles duplicados.
+- **Bloqueo honesto**: capturar Cola con un trabajo real, Presets, Ajustes y ejecutar una conversión *desde la UI* requiere interacción (clics). El host de QA no tiene `xdotool` y la app no acepta una sección inicial por entorno, así que esas cuatro piezas **no están verificadas visualmente**. No las invento ni las declaro hechas.
+- Decisión pendiente del usuario: autorizar (a) una bandera de QA `CAUCE_SECTION` en `window.rs` para abrir una sección concreta y capturarla, o (b) instalar `xdotool` en el host de QA y automatizar los clics. Con cualquiera de las dos se completan las cinco capturas y la conversión desde la UI.
