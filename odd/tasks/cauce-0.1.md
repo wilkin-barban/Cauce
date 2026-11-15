@@ -88,6 +88,9 @@ Una línea por tarea. `Route` indica quién ejecuta: `inline` (sesión principal
 | T24 | C-061 | 5 | S9, S14 | inline | `test(smoke): run gui and daemon under xvfb` |
 | T25 | C-062 | 5 | S14, S15 | inline | `chore(release): prepare 0.1.0 release candidate` |
 
+> **T2 (C-011) son 6 commits**, no uno: la primera versión tenía 1.054 líneas y violaba la
+> regla de ≤400 por unidad. Se dividió por dominio sin cambiar comportamiento (L8).
+
 ---
 
 ## Detalle de tareas
@@ -266,7 +269,7 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 
 ## Commits previstos
 
-25 commits atómicos en `main`, en el orden de la tabla de tareas. Cada uno: suite verde, `fmt` y `clippy` limpios, sin `Co-Authored-By` ni trailers de IA. Las fases 1-4 cierran con su puerta; la fase 5 no publica nada.
+30 commits atómicos en `main`, en el orden de la tabla de tareas (T2 se dividió en 6 commits, ver L8). Cada uno: suite verde, `fmt` y `clippy` limpios, sin `Co-Authored-By` ni trailers de IA. Las fases 1-4 cierran con su puerta; la fase 5 no publica nada.
 
 ---
 
@@ -312,3 +315,37 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - 25 tareas = 25 commits atómicos, una por ítem del backlog MVP, en el orden de dependencias del backlog (S13).
 - `T3` (C-017, fixtures) se adelanta a `T4` porque el parser de FFprobe necesita fixtures reales.
 - Ninguna tarea implementa `C-070`..`C-076` (S10).
+
+**L4 (T1 · C-010 · 86f1ece) — RED observado:**
+- `cargo test -p cauce-core --test workspace_boundaries` → `error: could not find `Cargo.toml` in `/home/wilkin/proyectos/Cauce` or any parent directory`, exit 101.
+- GREEN: workspace con los 7 crates y `serde_json` como dev-dependency de `cauce-core`; 3/3 tests pasan.
+- Sonda negativa (el guard muerde): agregar `cauce-jobs = { path = "../cauce-jobs" }` a `cauce-core` produce `cauce-core must not depend on cauce-jobs (docs/architecture.md §5)`, 1 failed, 2 passed. Revertido.
+- `cargo fmt --check` y `cargo clippy -D warnings` limpios.
+
+**L5 (T2 · C-011 · 6 commits, ver L8) — RED observado:**
+- `cargo test -p cauce-core --test domain_contracts` → `E0432`: 27 imports sin resolver (`MediaSnapshot`, `ConversionPlan`, `Job`, `Preset`, …) y `E0433`: `serde` no encontrado, exit 101.
+- GREEN dividido por dominio, cada commit compilando y testeando solo:
+  - `0f1e10b` `feat(core): add utc timestamp contract` — 158 líneas.
+  - `2fc9619` `feat(core): add media snapshot contract` — 193.
+  - `32effa7` `feat(core): add conversion plan contract` — 183.
+  - `c0c9d5b` `feat(core): add stable job error codes` — 63.
+  - `5eeaff7` `feat(core): add job state progress and priority contract` — 238.
+  - `ab304e6` `feat(core): add preset and settings contracts` — 258.
+- Seis JSON dorados (snapshot, plan, progress, job, settings, preset) y rechazo de `percent < 0`, `state` desconocido, `output_path == input_path`, concurrencia fuera de 1..=8 y timestamp no UTC.
+- Decisión de interpretación (no contradicción): `Preset` lleva `name_pt_br` y `description_pt_br` porque `presets.md` ratifica nombres PT-BR y S8 exige PT-BR; `contracts.md` §2.3 enumera campos comunes sin prohibir añadidos y §10 permite añadir campos opcionales sin romper el protocolo. Pendiente de veto del usuario.
+
+**L6 (T3 · C-017 · db1d72f) — RED observado:**
+- `cargo test -p cauce-ffmpeg --test fixtures` → 3/3 fallan: `the fixture generator must live at …/tests/fixtures/generate.sh`.
+- GREEN: 5 fixtures sintéticos (`h264+aac.mp4`, `hevc.mkv`, `vp9+opus.webm`, `flac`, `mp3`) de 24–89 KB, duración 2 s, y **byte-idénticos** entre dos corridas (verificado también para x265 y el muxer MP4 con `-fflags +bitexact -flags +bitexact -map_metadata -1`).
+- Los fixtures viven en `target/cauce-fixtures/` y no se versionan; `tests/fixtures/manifest.json` declara nombres, contenedor y cotas.
+- Árbol idéntico a la versión previa a la división: comparado antes de reescribir la historia, sin diferencias en `tests/fixtures` ni `crates/cauce-ffmpeg`.
+
+**L7 (proceso) — desvío registrado:** la evidencia RED se capturó en la sesión al momento de correr cada test, pero se transcribió a este Log después de cada commit y no antes de implementar, como pedía la regla 1. Corregido: desde T4 la entrada del Log se escribe antes de la implementación.
+
+**L8 (división de T2, pedido del usuario):**
+> "el commit T2 `6e6fbd4` tiene 1.054 líneas y supera la regla de commits atómicos ≤400" […] "Dividí T2 en commits coherentes de ≤400 líneas, sin perder ningún tipo ni test y sin cambiar el comportamiento."
+
+- Mecánica: `git reset --soft 86f1ece` sobre trabajo no pusheado, `git restore --staged .`, y staging por dominio; T1 (`86f1ece`) se preservó intacto.
+- Cambio estructural permitido por el usuario: `JobError`/`ErrorCode` se extrajeron de `src/job.rs` a `src/error.rs` (dominio propio, `contracts.md` §8) y `tests/domain_contracts.rs` se partió en `tests/{time,media,plan,error,job,preset,settings}_contracts.rs` más `tests/common/mod.rs`.
+- Prueba de no-regresión: los mismos 12 tests de contrato conservan nombre y aserciones; suite total 18/18; T3 byte-idéntico.
+- Efecto en el plan: 25 tareas → 30 commits.
