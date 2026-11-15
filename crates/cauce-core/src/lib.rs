@@ -13,7 +13,9 @@ pub mod output;
 pub mod plan;
 pub mod preset;
 pub mod probe;
+pub mod scheduler;
 pub mod settings;
+pub mod state;
 pub mod time;
 
 mod validate;
@@ -32,5 +34,7 @@ pub use plan::{
 };
 pub use preset::{DeviceFamily, HdrPolicy, Preset, SubtitlePolicy};
 pub use probe::parse_ffprobe;
+pub use scheduler::next_startable;
 pub use settings::{DuplicatePolicy, Language, Settings, Theme};
+pub use state::{JobAction, on_restart, transition_for};
 pub use time::Timestamp;
