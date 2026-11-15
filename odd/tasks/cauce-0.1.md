@@ -488,3 +488,17 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Los trabajos que estaban `probing|running|paused|validating` pasan a `interrupted` con evento `recovery` (`data-model.md` §4) y **no se reencolan automáticamente**: la UI debe ofrecer "Reencolar", que es la acción `Recover` de la máquina de estados.
 - Los `queued` siguen `queued` y el scheduler los toma en el primer tick si la cola está activa.
 - Consecuencia de UX: si el usuario pausó la cola y reinicia el daemon, la conversión de los pendientes vuelve a arrancar. Persistir el flag en `settings` queda para una fase posterior; no contradice ninguna spec y está anotado en `## Log`.
+
+**L25 (T15 · C-040 y primera review nativa real) — evidencia:**
+- RED: `couldn't find file .../src/client.rs` con los 6 tests escritos; el shell no podía imprimir `window-ready` porque el binario era un stub.
+- GREEN: 6 tests de GUI (4 de transporte + 2 de smoke bajo `xvfb-run`); suite **204/204** al cerrar la unidad. Smoke real: `window-ready`, exit 0.
+- Versiones resueltas contra las librerías del sistema: `gtk4 0.11.5` + `gtk4-sys 0.11.5`, `libadwaita 0.9.2` con `v1_9`, sobre GTK 4.22.4 / libadwaita 1.9.1, sin features vendorizadas.
+- Se añadió `src/lib.rs` real (el worker había incluido `client.rs` por `#[path]` en los tests); `main.rs` consume la librería.
+- Corte: 373 (cliente + manifiesto), 259 (tests de cliente), 373 (shell), 134 (binario + smoke). `Cargo.lock` (+616) es generado.
+
+**L26 (review nativa del candidato T15) — escalated, con dos hallazgos corregidos:**
+- `assess` marcó el rango como **high risk** por `process_boundary` en el binario de la GUI, así que la review nativa sí correspondía. Lentes: risk, resilience, reliability. Lineage `review-116bd8c960d6de90`, 10 archivos, 1759 líneas.
+- **Hallazgo CRITICAL R3-001** (determinista, causado por el cambio): ante un timeout el cliente no cerraba la conexión ni cancelaba el `read_loop`, así que un daemon colgado filtraba socket, tarea y fd. Corrección aplicada en `117` líneas de diff (presupuesto 200): el plazo aborta el lector y envía una señal de cierre que `supervise` consume, con test que comprueba EOF en el servidor (`a_timed_out_request_closes_the_connection`).
+- **El validador dirigido rechazó esa corrección** y encontró una regresión real (R3-REG-001): la señal de cierre no identificaba la conexión, así que un cierre viejo podía tirar una conexión nueva. Estado final de la lineage: **escalated**. Se corrigió en trabajo ordinario etiquetando la señal con la generación de la conexión, y se agregó `a_timeout_does_not_poison_the_next_request`.
+- Hallazgos no bloqueantes registrados por el revisor y **no** corregidos en esta lineage (quedan como follow-ups): R1-001 (fallback de `XDG_RUNTIME_DIR` a un temporal del proceso permite suplantar el daemon), R1-002 (lectura sin tope de línea y canal de eventos sin límite), R3-002/R4-003 (no se emite evento de desconexión al cerrar el daemon, el banner queda oculto hasta el próximo sondeo), R3-003 (los smoke tests pasan si falta Xvfb), R4-001 (`call` no tiene plazo mientras se abre el socket o se escribe), R4-002 (el lector de una conexión descartada sobrevive).
+- Los dos últimos R4 son consecuencia del mismo diseño y se atacan en T16 cuando el cliente se conecte a un daemon real durante la UI.
