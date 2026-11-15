@@ -1,0 +1,11 @@
+{
+  "max_size_bytes": 1048576,
+  "max_duration_ms": 3000,
+  "fixtures": [
+    { "name": "sample-h264-aac.mp4", "kind": "video", "container": "mp4" },
+    { "name": "sample-hevc.mkv", "kind": "video", "container": "matroska" },
+    { "name": "sample-vp9-opus.webm", "kind": "video", "container": "webm" },
+    { "name": "sample-audio.flac", "kind": "audio", "container": "flac" },
+    { "name": "sample-audio.mp3", "kind": "audio", "container": "mp3" }
+  ]
+}

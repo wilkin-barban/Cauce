@@ -5,3 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Cauce system FFmpeg and FFprobe integration"
+
+[dev-dependencies]
+serde_json = "1"
