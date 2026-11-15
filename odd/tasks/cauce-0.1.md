@@ -751,3 +751,14 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Capturas nuevas**: `01-convertir` (1440, con la tarjeta de drop), `03-presets` (1440, categorías), `06-convertir-960` (960, CTA visible).
 - **Pendientes de captura**: estado `drag-over` y un error humano en pantalla — requieren forzar el arrastre y un fallo real (p. ej. ruta denegada) y no se capturaron en esta pasada. El editor del preset personalizado tampoco tiene captura propia (está dentro de `03-presets`).
 - **Excepción de tamaño**: los commits de GUI (1784) y de jobs+daemon (826) superan 400 líneas; se aceptó para no inventar cortes sobre archivos que el worker no podía crear.
+
+**L55 (navegación de Presets) — corregido, con una captura válida y dos pendientes:**
+- **Chapa de categorías fija**: `AdwToggleGroup` con Todas · Smart TV · Web · Archivo · Audio · **Personalizado**, fuera de los dos scrollers, visible sin scrollear. Suite **295/295**.
+- **Detalle con lo esencial**: Contenedor, Código de video, Código de audio, Calidad (CRF) y Resolución máxima a la vista; perfil, nivel, bit depth, HDR, subtítulos, faststart y metadata dentro de "Detalles técnicos" cerrado. Valores ausentes en palabras.
+- **Estado vacío único**: eliminada la línea duplicada; la tarjeta de drop es la única instrucción.
+- **`03-presets.png` actualizada y verificada a ojo**: barra de chips fija, filtro Smart TV activo, lista filtrada y detalle con los cinco campos + "Detalles técnicos".
+- **Pendientes reales**:
+  1. **Editor del personalizado sin captura**: el clic sobre el chip "Personalizado" (700,62) no tomó en la corrida; la imagen resultante seguía en Smart TV, así que se descartó en lugar de guardarla con un nombre falso.
+  2. **Estado de error real sin captura**: requiere forzar un fallo verdadero (archivo inválido o ruta denegada); no se simuló.
+  3. **`drag-over`**: no capturable sin origen de arrastre real en Xvfb; queda cubierto por test.
+- **Paquete nuevo**: `target/debian/cauce_0.1.0-1_amd64.deb`, **sha256 `3b4183ccf33737bd42c3ca834e52ca35c99bab056fc6fb154d2b56568750beb9`**, instalado en el host de QA y `cauce.socket` reiniciado.
