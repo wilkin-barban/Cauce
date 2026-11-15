@@ -13,6 +13,16 @@
 //! never answers all become `DAEMON_UNAVAILABLE` (retryable, Spanish message).
 //! The next call always tries a fresh connection, so a daemon that comes up late
 //! is picked up without restarting the app.
+//!
+//! Robustness rules that a local attacker must not be able to bend:
+//!
+//! - The socket path is never guessed: `XDG_RUNTIME_DIR` must be an absolute path
+//!   or every call fails before any I/O (review finding R1-001).
+//! - One NDJSON line is capped at the daemon's own 1 MiB (`docs/contracts.md` §5)
+//!   and the event channel is bounded, so a peer cannot exhaust GUI memory
+//!   (review finding R1-002).
+//! - Socket open, write and flush share one deadline (review finding R4-001), and
+//!   dropping a connection aborts its reader (review finding R4-002).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -28,6 +38,21 @@ use tokio::net::unix::OwnedWriteHalf;
 
 /// How long one request may stay unanswered before the connection is dropped.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How many notifications one subscriber may have buffered. A peer that pushes
+/// faster than the UI drains must not grow memory without limit (finding R1-002).
+pub const EVENT_BUFFER: usize = 256;
+
+/// Client-side `<method>` of the notification that says the socket closed.
+///
+/// It is emitted on the event channel only: the wire protocol of
+/// `docs/contracts.md` §5/§7 does not change and this notification is never sent
+/// to the daemon, so the GUI learns about a crash before the next poll.
+pub const DISCONNECTED_EVENT: &str = "daemon.disconnected";
+
+/// One NDJSON message may not exceed this size, exactly like the daemon
+/// (`docs/contracts.md` §5). A longer line closes the connection.
+const MAX_LINE: usize = 1024 * 1024;
 
 /// Replies travel back to the awaiting caller through this channel.
 type Reply = async_channel::Sender<Result<Value, JobError>>;
@@ -73,6 +98,15 @@ impl Pending {
     fn close_connection(&self) {
         self.alive.store(false, Ordering::SeqCst);
         self.stop_reader();
+        self.signal_closed();
+    }
+
+    /// Asks `supervise` to drop THIS connection without touching the read task.
+    ///
+    /// Used when the reader ends by itself: closing the write half with it keeps
+    /// no half-open socket behind, so a peer that is still writing sees the EOF
+    /// instead of blocking on a socket nobody reads.
+    fn signal_closed(&self) {
         let _ = self.kill.try_send(self.generation);
     }
 
@@ -129,19 +163,38 @@ struct Connection {
     generation: u64,
 }
 
+impl Drop for Connection {
+    /// A discarded connection must stop reading immediately (review finding
+    /// R4-002): aborting the read task releases its half of the socket and marks
+    /// the pending map dead, so no late reply or notification survives the drop.
+    fn drop(&mut self) {
+        self.pending.stop_reader();
+        self.pending.fail_all(&daemon_unavailable(
+            "Se descartó la conexión con el daemon. Reintentando en el próximo intento.",
+        ));
+    }
+}
+
 impl Connection {
+    /// Opens the socket within `deadline`: a daemon that is not accepting must not
+    /// block the call forever (review finding R4-001).
     async fn open(
         socket: PathBuf,
         subscribers: Arc<Mutex<Vec<Subscriber>>>,
         kill: async_channel::Sender<u64>,
         generation: u64,
+        deadline: tokio::time::Instant,
     ) -> Result<Self, JobError> {
-        let stream = UnixStream::connect(&socket)
-            .await
-            .map_err(|error| daemon_unavailable(&format!(
-                "No se pudo conectar con el daemon en `{}`: {error}. Verificá que el servicio esté activo.",
-                socket.display()
-            )))?;
+        let stream = match tokio::time::timeout_at(deadline, UnixStream::connect(&socket)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) => {
+                return Err(daemon_unavailable(&format!(
+                    "No se pudo conectar con el daemon en `{}`: {error}. Verificá que el servicio esté activo.",
+                    socket.display()
+                )));
+            }
+            Err(_) => return Err(stalled_open()),
+        };
         let (read, writer) = stream.into_split();
         let pending = Arc::new(Pending::new(kill, generation));
         let reader = Arc::clone(&pending);
@@ -159,7 +212,16 @@ impl Connection {
     }
 
     /// Writes one request line, registers the pending reply and arms the watchdog.
-    async fn send(&mut self, id: u64, request: Request) -> Result<(), JobError> {
+    ///
+    /// Write and flush share the same `deadline` as the socket open: a peer that
+    /// accepts and never reads fills the buffer and would otherwise hang here
+    /// (review finding R4-001).
+    async fn send(
+        &mut self,
+        id: u64,
+        request: Request,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), JobError> {
         let envelope = json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -174,13 +236,20 @@ impl Connection {
             )
         })?;
         line.push('\n');
-        if let Err(error) = self.writer.write_all(line.as_bytes()).await {
-            self.pending.close_connection();
-            return Err(unavailable_with_io(&error));
-        }
-        if let Err(error) = self.writer.flush().await {
-            self.pending.close_connection();
-            return Err(unavailable_with_io(&error));
+        let write = async {
+            self.writer.write_all(line.as_bytes()).await?;
+            self.writer.flush().await
+        };
+        match tokio::time::timeout_at(deadline, write).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                self.pending.close_connection();
+                return Err(unavailable_with_io(&error));
+            }
+            Err(_) => {
+                self.pending.close_connection();
+                return Err(stalled_open());
+            }
         }
         self.pending.register(id, request.reply);
         let pending = Arc::clone(&self.pending);
@@ -207,26 +276,129 @@ async fn read_loop(
     pending: Arc<Pending>,
     subscribers: Arc<Mutex<Vec<Subscriber>>>,
 ) {
-    let mut lines = BufReader::new(read).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let Ok(message) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if message.get("method").is_some() {
-            broadcast(&subscribers, message);
-            continue;
+    let mut lines = Lines::new(read);
+    let failure = loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if message.get("method").is_some() {
+                    broadcast(&subscribers, message);
+                    continue;
+                }
+                let Some(id) = message.get("id").and_then(Value::as_u64) else {
+                    continue;
+                };
+                let Some(reply) = pending.take(id) else {
+                    continue;
+                };
+                let _ = reply.try_send(parse_response(&message));
+            }
+            Ok(None) => {
+                break daemon_unavailable(
+                    "Se perdió la conexión con el daemon. Reconectando en el próximo intento.",
+                );
+            }
+            Err(LineError::TooLong) => {
+                break daemon_unavailable(
+                    "El daemon envió una línea de más de 1 MiB y se cerró la conexión. Probá de nuevo.",
+                );
+            }
+            Err(LineError::Io) => {
+                break daemon_unavailable(
+                    "Se perdió la conexión con el daemon. Reconectando en el próximo intento.",
+                );
+            }
         }
-        let Some(id) = message.get("id").and_then(Value::as_u64) else {
-            continue;
-        };
-        let Some(reply) = pending.take(id) else {
-            continue;
-        };
-        let _ = reply.try_send(parse_response(&message));
+    };
+    // Client-side only: this event is never written to the daemon and does not
+    // change the wire protocol of `docs/contracts.md` §5/§7. It is emitted once
+    // per connection, before the pending replies fail, so the banner appears as
+    // soon as the daemon crashes (review findings R3-002 and R4-003).
+    broadcast(
+        &subscribers,
+        json!({"jsonrpc": "2.0", "method": DISCONNECTED_EVENT, "params": {}}),
+    );
+    // The write half must go away with the reader: a half-open socket would let a
+    // peer keep writing into a buffer nobody drains.
+    pending.signal_closed();
+    pending.fail_all(&failure);
+}
+
+/// Why a read ended the connection.
+enum LineError {
+    /// The line grew past [`MAX_LINE`]: the peer is not following the protocol.
+    TooLong,
+    /// The socket failed; treated exactly like a clean EOF by the caller.
+    Io,
+}
+
+/// A bounded NDJSON line reader.
+///
+/// `BufRead::lines` buffers an arbitrarily long line before serialising it, so a
+/// peer that never sends `\n` would grow the GUI's memory without limit. This
+/// reader rejects a line as soon as it passes [`MAX_LINE`] (review finding
+/// R1-002) and still keeps the read side's buffering, so no data is lost between
+/// iterations.
+struct Lines {
+    read: BufReader<tokio::net::unix::OwnedReadHalf>,
+    partial: Vec<u8>,
+}
+
+impl Lines {
+    fn new(read: tokio::net::unix::OwnedReadHalf) -> Self {
+        Self {
+            read: BufReader::new(read),
+            partial: Vec::new(),
+        }
     }
-    pending.fail_all(&daemon_unavailable(
-        "Se perdió la conexión con el daemon. Reconectando en el próximo intento.",
-    ));
+
+    /// Next line without its `\n`, `Ok(None)` at EOF.
+    async fn next_line(&mut self) -> Result<Option<String>, LineError> {
+        self.partial.clear();
+        loop {
+            let mut consumed = 0;
+            let mut complete = false;
+            let mut too_long = false;
+            let mut eof = false;
+            {
+                let available = self.read.fill_buf().await.map_err(|_| LineError::Io)?;
+                if available.is_empty() {
+                    eof = true;
+                } else if let Some(end) = available.iter().position(|byte| *byte == b'\n') {
+                    if self.partial.len() + end > MAX_LINE {
+                        too_long = true;
+                    } else {
+                        self.partial.extend_from_slice(&available[..end]);
+                        complete = true;
+                    }
+                    consumed = end + 1;
+                } else {
+                    if self.partial.len() + available.len() > MAX_LINE {
+                        too_long = true;
+                    } else {
+                        self.partial.extend_from_slice(available);
+                    }
+                    consumed = available.len();
+                }
+            }
+            self.read.consume(consumed);
+            if too_long {
+                return Err(LineError::TooLong);
+            }
+            if eof {
+                return Ok(if self.partial.is_empty() {
+                    None
+                } else {
+                    Some(String::from_utf8_lossy(&self.partial).into_owned())
+                });
+            }
+            if complete {
+                return Ok(Some(String::from_utf8_lossy(&self.partial).into_owned()));
+            }
+        }
+    }
 }
 
 fn broadcast(subscribers: &Mutex<Vec<Subscriber>>, message: Value) {
@@ -235,8 +407,15 @@ fn broadcast(subscribers: &Mutex<Vec<Subscriber>>, message: Value) {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     list.retain(|subscriber| !subscriber.is_closed());
     for subscriber in list.iter() {
-        let _ = subscriber.try_send(message.clone());
+        offer(subscriber, &message);
     }
+}
+
+/// Bounded delivery: `force_send` replaces the oldest buffered event when the
+/// channel is full, so the backlog never grows and the newest events still win
+/// (review finding R1-002).
+fn offer(subscriber: &Subscriber, message: &Value) {
+    let _ = subscriber.force_send(message.clone());
 }
 
 /// `{"result": …}` succeeds; `{"error": {"code","message","data.retryable"}}` fails.
@@ -263,13 +442,31 @@ fn parse_response(message: &Value) -> Result<Value, JobError> {
 ///
 /// The daemon's own helper is not reachable from this crate (the GUI may not
 /// depend on `cauce-daemon`), so the rule of `docs/contracts.md` §5 is repeated
-/// here: the runtime dir, or the temp dir when the variable is unset.
-pub fn socket_path() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
+/// here — without the daemon's own fallback: it runs as a service with a valid
+/// runtime dir, while guessing one for the client would let a local attacker
+/// bind the socket first and impersonate the daemon (review finding R1-001).
+pub fn socket_path() -> Result<PathBuf, JobError> {
+    let Some(base) = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("cauce").join("daemon.sock")
+    else {
+        return Err(missing_runtime_dir());
+    };
+    Ok(base.join("cauce").join("daemon.sock"))
+}
+
+/// The refusal that replaces the old temp-dir fallback.
+fn missing_runtime_dir() -> JobError {
+    daemon_unavailable(
+        "XDG_RUNTIME_DIR no está definido como ruta absoluta, así que el cliente no puede saber dónde está el socket del daemon. Definí XDG_RUNTIME_DIR con una ruta absoluta (por ejemplo `/run/user/1000`) y reintentá.",
+    )
+}
+
+/// One deadline covers socket open, write and flush (review finding R4-001).
+fn stalled_open() -> JobError {
+    daemon_unavailable(
+        "El daemon no respondió a tiempo al abrir la conexión. Se descartó la conexión; probá de nuevo.",
+    )
 }
 
 fn daemon_unavailable(message: &str) -> JobError {
@@ -350,9 +547,13 @@ impl Client {
     }
 
     /// A receiver for the daemon's notifications (`job.updated`, `job.progress`,
-    /// `queue.updated`, `log.entry`, `daemon.status`).
+    /// `queue.updated`, `log.entry`, `daemon.status`) and for the client-side
+    /// [`DISCONNECTED_EVENT`].
+    ///
+    /// The buffer is bounded: past [`EVENT_BUFFER`] the oldest event is dropped so
+    /// a chatty peer cannot exhaust memory (review finding R1-002).
     pub fn events(&self) -> async_channel::Receiver<Value> {
-        let (sender, receiver) = async_channel::unbounded();
+        let (sender, receiver) = async_channel::bounded(EVENT_BUFFER);
         let mut list = self
             .subscribers
             .lock()
@@ -395,13 +596,23 @@ async fn supervise(
         if connection.as_ref().is_some_and(|live| !live.is_alive()) {
             connection = None;
         }
+        // One deadline covers socket open, write and flush (review finding R4-001).
+        let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
         if connection.is_none() {
+            let socket = match socket_path() {
+                Ok(socket) => socket,
+                Err(error) => {
+                    let _ = request.reply.try_send(Err(error));
+                    continue;
+                }
+            };
             generation = generation.wrapping_add(1);
             match Connection::open(
-                socket_path(),
+                socket,
                 Arc::clone(&subscribers),
                 kill_tx.clone(),
                 generation,
+                deadline,
             )
             .await
             {
@@ -416,7 +627,7 @@ async fn supervise(
             continue;
         };
         next_id += 1;
-        if let Err(error) = live.send(next_id, request).await {
+        if let Err(error) = live.send(next_id, request, deadline).await {
             live.pending.fail_all(&error);
             connection = None;
         }
@@ -425,9 +636,12 @@ async fn supervise(
 
 impl std::fmt::Debug for Client {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let socket = socket_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "<XDG_RUNTIME_DIR ausente o relativo>".to_owned());
         formatter
             .debug_struct("Client")
-            .field("socket", &socket_path())
+            .field("socket", &socket)
             .finish()
     }
 }
