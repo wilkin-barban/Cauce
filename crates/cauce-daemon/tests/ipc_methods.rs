@@ -15,9 +15,8 @@ use serde_json::{Value, json};
 const FIXTURE: &str = "target/cauce-fixtures/run/sample-h264-aac.mp4";
 
 fn unique_dir(tag: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH);
+    let nanos = elapsed.map_or(0, |d| d.as_nanos());
     let dir = std::env::temp_dir().join(format!("cauce-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("directorio temporal");
     dir
@@ -25,11 +24,8 @@ fn unique_dir(tag: &str) -> PathBuf {
 
 fn repo_root() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace")
-        .to_path_buf()
+    let root = manifest.parent().and_then(Path::parent);
+    root.expect("workspace").to_path_buf()
 }
 
 /// The real fixture plus a working FFmpeg, or `None` after naming the gap.
@@ -56,9 +52,8 @@ struct Client {
 impl Client {
     fn connect(path: &Path) -> Self {
         let stream = UnixStream::connect(path).expect("conectar al socket");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
-            .expect("timeout");
+        let timeout = Some(Duration::from_secs(30));
+        stream.set_read_timeout(timeout).expect("timeout");
         let reader = BufReader::new(stream.try_clone().expect("clonar el socket"));
         Self {
             reader,
@@ -110,10 +105,8 @@ impl Client {
             json!(false),
             "{response}"
         );
-        response["error"]["code"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
+        let code = response["error"]["code"].as_str().unwrap_or_default();
+        code.to_owned()
     }
 }
 
@@ -131,10 +124,7 @@ impl Case {
         let socket_path = dir.join("runtime/cauce/daemon.sock");
         let store = Store::open(&dir.join("cauce.db")).expect("abrir la base");
         let daemon = Arc::new(Daemon::new(store, vec![dir.clone(), repo_root()]));
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
         let listener = runtime
             .block_on(socket::bind(&socket_path))
             .expect("socket");
@@ -320,8 +310,7 @@ fn pauses_resumes_and_cancels_a_job_through_actions() {
     let mut case = Case::new("jobs-actions");
     let job = case.add_one_job(&fixture, "system-smarttv-compat");
     let id = job["id"].as_str().expect("id").to_owned();
-    // The conversion loop lands in T13b: the case drives the job to `running`
-    // through the same store the scheduler will use.
+    // No live child here: the case drives the store directly.
     {
         let mut store = case.daemon.store_mut();
         store
@@ -342,12 +331,23 @@ fn pauses_resumes_and_cancels_a_job_through_actions() {
 }
 
 #[test]
-fn remove_reports_the_documented_gap() {
+fn remove_deletes_a_job_and_reports_it() {
+    let Some(fixture) = ready() else {
+        return;
+    };
     let mut case = Case::new("jobs-remove");
-    let response = case.client.call("jobs.remove", json!({"id": "x"}));
-    let message = response["error"]["message"].as_str().unwrap_or_default();
-    assert_eq!(response["error"]["code"], json!("INTERNAL"));
-    assert!(message.contains("no disponible todavía"), "{response}");
+    let job = case.add_one_job(&fixture, "system-smarttv-compat");
+    let id = job["id"].as_str().expect("id").to_owned();
+    let removed = case.client.result("jobs.remove", json!({"id": id}));
+    assert_eq!(removed, json!({"removed": true}), "se borra");
+    let again = case.client.result("jobs.remove", json!({"id": id}));
+    assert_eq!(
+        again,
+        json!({"removed": false}),
+        "borrar dos veces no falla"
+    );
+    let listed = case.client.result("jobs.list", json!({}));
+    assert_eq!(listed.as_array().map(Vec::len), Some(0), "cola vacía");
 }
 
 #[test]

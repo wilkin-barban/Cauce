@@ -25,7 +25,40 @@ use tokio::sync::broadcast::error::RecvError;
 
 pub use dispatch::Daemon;
 pub use events::{Event, Events, LogEntry};
-pub use orchestrator::OrchestratorConfig;
+pub use orchestrator::{OrchestratorConfig, tick};
+
+/// Starts the scheduling loop that drives conversions (`docs/architecture.md` §6).
+///
+/// The daemon boots the loop next to the socket: `tick` runs on a blocking task
+/// every [`orchestrator::TICK_INTERVAL`] while the queue is paused or not, and
+/// only `cauce_core::next_startable` decides whether anything starts. Returning
+/// the task handle lets the caller abort it on shutdown, which drops the child
+/// handles and kills every FFmpeg process group (`docs/architecture.md` §18).
+pub fn spawn_orchestrator(
+    daemon: Arc<Daemon>,
+    config: OrchestratorConfig,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let owner = Arc::clone(&daemon);
+            let settings = config.clone();
+            match tokio::task::spawn_blocking(move || orchestrator::tick(&owner, &settings)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    daemon
+                        .events()
+                        .log("warn", "scheduler", format!("tick: {}", error.message))
+                }
+                Err(error) => daemon.events().log(
+                    "error",
+                    "scheduler",
+                    format!("el planificador no pudo ejecutarse: {error}"),
+                ),
+            }
+            tokio::time::sleep(orchestrator::TICK_INTERVAL).await;
+        }
+    })
+}
 
 /// Accepts connections until the listener or the caller goes away.
 ///
