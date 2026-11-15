@@ -454,3 +454,24 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Segundo test flaky corregido**: `toolchain.rs` sufría el mismo `ETXTBSY` que T10 (fakes compartidos por PID). Se aplicó carpeta única + publicación atómica ejecutable (`chmod` sobre el archivo staged y después `rename`). Verificado con **10 corridas del workspace completo, 0 fallos**.
 - Gaps documentados para T13b: `jobs.remove` devuelve `INTERNAL "no disponible todavía"` (falta `Store::remove_job`), no hay bucle de conversión (sin `job.progress`), `log.entry` no se emite (solo ring en memoria) y la pausa de cola vive solo en memoria.
 - Corte: 130 (probe) · 397 (protocolo + eventos) · 245 (socket) · 62 (ids) · 390 (dispatch) · 255 (serve + main) · 260 y 400 (tests).
+
+**L20 (T13b · C-032, orquestador) — el daemon convierte y sobrevive a la GUI:**
+- RED real: `E0599` por `set_probe_and_plan`, `set_temp_path`, `set_error`, `save_progress` y `remove_job`; `E0432` por `cauce_daemon::orchestrator`.
+- GREEN: 7 tests de store + 7 de orquestador; suite 189/189.
+- `tick` es síncrono y testeable: reapa hijos terminados, publica o falla, y arranca como mucho un trabajo por tick según `next_startable`. El bucle asíncrono de 250 ms vive en `lib.rs` y `main.rs` lo arranca tras la recuperación.
+- Conversión real observada en test: `sample-h264-aac.mp4` → salida de 53 286 B, recorrido `queued→probing→running→validating→completed`, temporal limpiado, 1 muestra de progreso (96 %).
+- Reglas: `set_error` antes de `failed` (el CHECK lo exige); publicación atómica con `fs::rename`; `suffix`/`skip` nunca sobrescriben; cancelar mata el grupo, deja `cancelled` y el temporal queda si `keep_temp_on_failure`.
+- Gaps documentados: el `tick` usa el `output_path` persistido en vez de re-resolverlo; el fin de proceso se detecta por el marcador de stderr (un hijo que cierre stderr antes de tiempo bloquearía un tick); `pause`/`resume` de un hijo vivo está cableado pero solo `cancel` tiene test.
+- Corte: 135 · 382 · 191 · 349 · 60 · 9 · 398 (el mensaje del commit `edf0f53` menciona el arranque del scheduler, que en realidad entra en `4681c21`; el contenido es correcto).
+
+**L21 (T14 · C-033) — unidades de usuario:**
+- RED real: las 5 pruebas fallan con `No such file or directory` al leer `packaging/cauce.{socket,service}`.
+- GREEN: 5 tests; suite 194/194.
+- `cauce.socket`: `ListenStream=%t/cauce/daemon.sock`, `SocketMode=0600`, `DirectoryMode=0700`, `RemoveOnStop=yes`, `WantedBy=sockets.target`. `cauce.service`: `Type=exec`, `ExecStart=/usr/bin/cauce-daemon`, `Restart=on-failure`, `RestartSec=2`, `NoNewPrivileges=yes`, `Requires/After=cauce.socket`, `WantedBy=default.target`, sin `User=`.
+- `systemd-analyze verify` corre de verdad (systemd 259) y devuelve una única línea: `Command /usr/bin/cauce-daemon is not executable`, esperada hasta que el `.deb` instale el binario. El test acepta **exactamente** ese diagnóstico y cualquier otro lo hace fallar; se endurecerá en C-050.
+
+**L22 (G2 · Puerta del daemon — cerrada con el binario real):**
+- `cargo fmt --check` limpio, `clippy -D warnings` sin issues, **194 tests / 46 suites** en verde.
+- Smoke real (no in-process): daemon arrancado desde `target/debug/cauce-daemon` con `XDG_RUNTIME_DIR` temporal → socket `0600` en directorio `0700`; `initialize` → `protocol_version: 1`; `system.capabilities` → FFmpeg 8.0.1, `ffmpeg_missing: []`, 6 núcleos; `jobs.add` con un fixture real → `queued → running → validating → completed`, salida de 53 286 B publicada; `SIGTERM` → **exit 0** y socket eliminado.
+- Recuperación tras reinicio y `SO_PEERCRED` cubiertas por tests (`marks_active_jobs_interrupted_on_recovery`, `peer_uid_matches_the_test_process`).
+- La GUI no se tocó: sigue siendo `fn main() {}`.
