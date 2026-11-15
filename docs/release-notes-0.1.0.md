@@ -66,6 +66,10 @@ los logs viven en `$XDG_DATA_HOME/cauce/`.
 
 ## Limitaciones conocidas de 0.1.0
 
+- **`progress.percent` persistido**: un trabajo `completed` conserva en la base el
+  último porcentaje muestreado (p. ej. 96) en vez de 100. La interfaz pinta la barra
+  llena y el estado "Completada", así que el usuario no lo ve; el dato que devuelve
+  la API queda desalineado. Queda como deuda de 0.1.1.
 - **Sin fixture HDR**: la cadena de tone-mapping HDR→SDR está implementada y
   probada a nivel de filtros, pero no hay muestra HDR en el conjunto e2e, así que
   esa ruta no se ejercita de punta a punta.
