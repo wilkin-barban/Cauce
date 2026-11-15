@@ -801,3 +801,9 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Test de regresión** con el nombre real y con uno hostil (`<`, `>`, `"`, `'`): el título no queda vacío y el round-trip por `pango::parse_markup` devuelve el texto exacto.
 - Suite **311/311**, `fmt` y `clippy -D warnings` limpios.
 - Captura con ese archivo seleccionado: **no** se pudo (el `GtkFileDialog` no se automatiza en Xvfb, ya documentado en L60); no se simuló.
+
+**L62 (aclaración: el hash distinto del `.deb` es stripping, no binario viejo)** — corrección de un falso positivo propio:
+- El binario dentro del `.deb` (`4f42a479…`) **no coincide** con `target/release/cauce-gui` (`b29da473…`) porque **`cargo-deb` aplica `strip`**: `file /usr/bin/cauce-gui` dice **stripped**, mientras que `target/release/cauce-gui` conserva símbolos. Cambian tamaño y hash, no el código.
+- Mi diagnóstico anterior ("`--no-build` empaqueta un binario viejo") fue **incorrecto**: lo deduje de un `file` cuyo `sed` recortó justo la marca `stripped`. El `.deb` `fb8ff68b…` se construyó **después** de `a0309cc`, así que **incluye el fix**.
+- **No se cambia el empaquetado** ni se persigue ese falso positivo. Queda como referencia: comparar `target/release/*` con el contenido del `.deb` no sirve como verificación de frescura; hay que comparar contra el `.deb` previo (`aa4c9a28…` → `4f42a479…` sí cambió) o mejor, contra el commit/`dpkg -l` y la fecha.
+- Estado para la prueba del usuario: `.deb` `fb8ff68bca953b353729c535469b8d9f1a3eb649a4e5a687cc9a252d6599c7c1`, instalado (`0.1.0-1`), `cauce.socket` **active**.
