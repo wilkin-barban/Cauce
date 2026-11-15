@@ -48,20 +48,24 @@ struct Pending {
     /// immediately so a hung daemon cannot leak the socket, the task and the fd
     /// (review finding R3-001).
     reader: Mutex<Option<tokio::task::AbortHandle>>,
-    /// Signals `supervise` to drop the live connection right away.
-    kill: async_channel::Sender<()>,
+    /// Signals `supervise` to drop THIS connection. The payload is the connection
+    /// generation, so a kill queued by an old connection can never drop a newer one
+    /// (review regression R3-REG-001).
+    kill: async_channel::Sender<u64>,
+    generation: u64,
     slots: Mutex<HashMap<u64, Reply>>,
     /// Set to false when the reader sees the connection end or time out.
     alive: AtomicBool,
 }
 
 impl Pending {
-    fn new(kill: async_channel::Sender<()>) -> Self {
+    fn new(kill: async_channel::Sender<u64>, generation: u64) -> Self {
         Self {
             slots: Mutex::new(HashMap::new()),
             alive: AtomicBool::new(true),
             reader: Mutex::new(None),
             kill,
+            generation,
         }
     }
 
@@ -69,7 +73,7 @@ impl Pending {
     fn close_connection(&self) {
         self.alive.store(false, Ordering::SeqCst);
         self.stop_reader();
-        let _ = self.kill.try_send(());
+        let _ = self.kill.try_send(self.generation);
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Reply>> {
@@ -122,13 +126,15 @@ impl Pending {
 struct Connection {
     writer: OwnedWriteHalf,
     pending: Arc<Pending>,
+    generation: u64,
 }
 
 impl Connection {
     async fn open(
         socket: PathBuf,
         subscribers: Arc<Mutex<Vec<Subscriber>>>,
-        kill: async_channel::Sender<()>,
+        kill: async_channel::Sender<u64>,
+        generation: u64,
     ) -> Result<Self, JobError> {
         let stream = UnixStream::connect(&socket)
             .await
@@ -137,11 +143,15 @@ impl Connection {
                 socket.display()
             )))?;
         let (read, writer) = stream.into_split();
-        let pending = Arc::new(Pending::new(kill));
+        let pending = Arc::new(Pending::new(kill, generation));
         let reader = Arc::clone(&pending);
         let task = tokio::spawn(async move { read_loop(read, reader, subscribers).await });
         pending.set_reader(task.abort_handle());
-        Ok(Self { writer, pending })
+        Ok(Self {
+            writer,
+            pending,
+            generation,
+        })
     }
 
     fn is_alive(&self) -> bool {
@@ -361,12 +371,20 @@ async fn supervise(
 ) {
     let mut connection: Option<Connection> = None;
     let mut next_id = 0_u64;
-    let (kill_tx, kill_rx) = async_channel::unbounded::<()>();
+    let (kill_tx, kill_rx) = async_channel::unbounded::<u64>();
+    let mut generation = 0_u64;
     loop {
         let request = tokio::select! {
             // A timed-out or broken connection is dropped here, not on the next call.
-            _ = kill_rx.recv() => {
-                connection = None;
+            // The generation guard keeps a stale kill from dropping a newer connection.
+            killed = kill_rx.recv() => {
+                if let Ok(generation) = killed
+                    && connection
+                        .as_ref()
+                        .is_some_and(|live| live.generation == generation)
+                {
+                    connection = None;
+                }
                 continue;
             }
             request = requests.recv() => match request {
@@ -378,7 +396,15 @@ async fn supervise(
             connection = None;
         }
         if connection.is_none() {
-            match Connection::open(socket_path(), Arc::clone(&subscribers), kill_tx.clone()).await {
+            generation = generation.wrapping_add(1);
+            match Connection::open(
+                socket_path(),
+                Arc::clone(&subscribers),
+                kill_tx.clone(),
+                generation,
+            )
+            .await
+            {
                 Ok(fresh) => connection = Some(fresh),
                 Err(error) => {
                     let _ = request.reply.try_send(Err(error));
