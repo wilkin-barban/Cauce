@@ -8,6 +8,9 @@ description = "Cauce system FFmpeg and FFprobe integration"
 
 [dependencies]
 cauce-core = { path = "../cauce-core" }
+# The only FFI dependency: `kill(2)`, so pause/resume/cancel signal the FFmpeg
+# process group (`docs/architecture.md` §7) instead of a single pid.
+libc = "0.2"
 
 [dev-dependencies]
 serde_json = "1"

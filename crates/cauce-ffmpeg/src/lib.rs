@@ -1,5 +1,7 @@
 //! Cauce integration with the system FFmpeg and FFprobe binaries.
 
+pub mod progress;
+pub mod runner;
 pub mod toolchain;
 
 pub use toolchain::{
