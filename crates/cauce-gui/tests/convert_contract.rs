@@ -1,0 +1,254 @@
+//! Contract of the Convertir page core (`docs/ui-mvp.md` §4, `docs/contracts.md` §6).
+//!
+//! The decisions of the page live in a plain struct with no GTK types, so the
+//! whole state machine, the folder expansion and the queue request are tested
+//! without a display. The widgets are only a rendering of this state.
+
+use std::fs;
+use std::path::PathBuf;
+
+use cauce_core::{AudioStream, Capabilities, MediaSnapshot, Timestamp, VideoStream};
+use cauce_gui::pages::convert::{self, ConvertPhase, ConvertState};
+
+fn snapshot(path: &str) -> MediaSnapshot {
+    MediaSnapshot {
+        path: path.to_owned(),
+        container: "mp4".to_owned(),
+        duration_ms: 12_500,
+        size_bytes: 1024,
+        bitrate_bps: 900_000,
+        video_streams: vec![VideoStream {
+            index: 0,
+            codec: "h264".to_owned(),
+            profile: Some("high".to_owned()),
+            level: None,
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            pixel_format: "yuv420p".to_owned(),
+            bit_depth: 8,
+            is_hdr: false,
+            bitrate_bps: None,
+            language: None,
+        }],
+        audio_streams: vec![AudioStream {
+            index: 1,
+            codec: "aac".to_owned(),
+            channels: 2,
+            sample_rate: 48_000,
+            bitrate_bps: None,
+            language: Some("spa".to_owned()),
+            is_default: true,
+        }],
+        subtitle_streams: Vec::new(),
+        probed_at: Timestamp::parse("2026-11-14T10:00:00Z").expect("timestamp válido"),
+    }
+}
+
+/// A page with one accepted input, an output folder and a preset: queueable.
+fn ready_state() -> ConvertState {
+    let mut state = ConvertState::new();
+    state.set_output_dir(Some("/home/wilkin/Vídeos".to_owned()));
+    state.set_preset(Some("mp4-h264".to_owned()));
+    state.add_inputs(vec!["/tmp/entrada.mp4".to_owned()]);
+    state.accept_probe(snapshot("/tmp/entrada.mp4"));
+    state
+}
+
+#[test]
+fn empty_state_cannot_queue() {
+    let mut state = ConvertState::new();
+
+    assert_eq!(
+        state.phase(),
+        ConvertPhase::Empty,
+        "sin entradas el estado es Inicial"
+    );
+    assert!(!state.can_queue(), "sin entradas no hay nada que encolar");
+    assert!(
+        state.take_queue_request().is_none(),
+        "un estado vacío nunca produce una petición de cola"
+    );
+}
+
+#[test]
+fn ready_requires_inputs_output_dir_and_preset() {
+    let state = ready_state();
+    assert_eq!(state.phase(), ConvertPhase::Ready);
+    assert!(
+        state.can_queue(),
+        "con entradas, carpeta y preset está listo"
+    );
+
+    let mut without_inputs = ConvertState::new();
+    without_inputs.set_output_dir(Some("/tmp/salida".to_owned()));
+    without_inputs.set_preset(Some("mp4-h264".to_owned()));
+    assert!(!without_inputs.can_queue(), "sin entradas falta una pieza");
+
+    let mut without_dir = ready_state();
+    without_dir.set_output_dir(None);
+    assert!(
+        !without_dir.can_queue(),
+        "sin carpeta de salida falta una pieza"
+    );
+
+    let mut without_preset = ready_state();
+    without_preset.set_preset(None);
+    assert!(!without_preset.can_queue(), "sin preset falta una pieza");
+
+    let mut inspecting = ConvertState::new();
+    inspecting.set_output_dir(Some("/tmp/salida".to_owned()));
+    inspecting.set_preset(Some("mp4-h264".to_owned()));
+    inspecting.add_inputs(vec!["/tmp/otro.mp4".to_owned()]);
+    assert_eq!(inspecting.phase(), ConvertPhase::Inspecting);
+    assert!(
+        !inspecting.can_queue(),
+        "mientras se inspecciona el botón sigue deshabilitado"
+    );
+}
+
+#[test]
+fn rejected_probes_keep_the_phase_partial() {
+    let mut state = ConvertState::new();
+    state.set_output_dir(Some("/tmp/salida".to_owned()));
+    state.set_preset(Some("mp4-h264".to_owned()));
+    state.add_inputs(vec![
+        "/tmp/bueno.mp4".to_owned(),
+        "/tmp/roto.mkv".to_owned(),
+    ]);
+    state.accept_probe(snapshot("/tmp/bueno.mp4"));
+    state.reject(
+        "/tmp/roto.mkv".to_owned(),
+        "FFprobe no pudo leer el archivo".to_owned(),
+    );
+
+    assert_eq!(
+        state.phase(),
+        ConvertPhase::Partial,
+        "un rechazo no borra los válidos"
+    );
+    assert_eq!(state.accepted().len(), 1);
+    assert_eq!(state.rejected().len(), 1);
+    assert_eq!(state.rejected()[0].path, "/tmp/roto.mkv");
+    assert!(
+        state.rejected()[0].message.contains("FFprobe"),
+        "el motivo del rechazo se conserva: {}",
+        state.rejected()[0].message
+    );
+    assert!(state.can_queue(), "los válidos se pueden encolar igual");
+}
+
+#[test]
+fn queue_request_contains_every_accepted_input() {
+    let mut state = ready_state();
+    state.add_inputs(vec![
+        "/tmp/segundo.mkv".to_owned(),
+        "/tmp/roto.wav".to_owned(),
+    ]);
+    state.accept_probe(snapshot("/tmp/segundo.mkv"));
+    state.reject("/tmp/roto.wav".to_owned(), "duración ilegible".to_owned());
+
+    let request = state.take_queue_request().expect("listo para encolar");
+
+    assert_eq!(
+        request.inputs,
+        vec!["/tmp/entrada.mp4".to_owned(), "/tmp/segundo.mkv".to_owned()],
+        "la petición lleva todas las entradas aceptadas, en orden"
+    );
+    assert!(
+        !request.inputs.contains(&"/tmp/roto.wav".to_owned()),
+        "los rechazados nunca entran en la cola"
+    );
+    assert_eq!(request.output_dir, "/home/wilkin/Vídeos");
+    assert_eq!(request.preset_id, "mp4-h264");
+}
+
+#[test]
+fn queue_request_is_taken_once() {
+    let mut state = ready_state();
+
+    assert!(
+        state.take_queue_request().is_some(),
+        "la primera vez se entrega"
+    );
+    assert!(
+        state.take_queue_request().is_none(),
+        "sin cambios de estado una segunda llamada no repite el alta"
+    );
+
+    state.set_preset(Some("mkv-h265".to_owned()));
+    let request = state
+        .take_queue_request()
+        .expect("un cambio de estado vuelve a habilitar la petición");
+    assert_eq!(request.preset_id, "mkv-h265");
+}
+
+#[test]
+fn missing_ffmpeg_short_circuits_the_page() {
+    let capabilities = Capabilities {
+        ffmpeg_missing: vec!["libx265".to_owned()],
+        ..Capabilities::default()
+    };
+    let mut state = ready_state();
+    state.apply_capabilities(&capabilities);
+
+    assert_eq!(
+        state.phase(),
+        ConvertPhase::Error,
+        "sin FFmpeg la página queda bloqueada"
+    );
+    assert!(!state.can_queue(), "no se puede encolar sin FFmpeg");
+    let message = state.blocking().expect("hay un bloqueo con mensaje");
+    assert!(
+        message.contains("sudo apt install ffmpeg"),
+        "la acción es concreta: {message}"
+    );
+
+    let healthy = Capabilities {
+        encoders: vec!["libx264".to_owned()],
+        ..Capabilities::default()
+    };
+    let mut state = ready_state();
+    state.apply_capabilities(&healthy);
+    assert_eq!(state.phase(), ConvertPhase::Ready);
+    assert!(
+        state.blocking().is_none(),
+        "con FFmpeg completo no hay bloqueo"
+    );
+    assert!(state.can_queue());
+}
+
+#[test]
+fn adding_a_folder_expands_its_regular_files() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("gui-convert")
+        .join(format!("carpeta-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).expect("carpeta temporal");
+
+    for name in ["uno.mp4", "dos.mkv", "tres.wav"] {
+        fs::write(dir.join(name), b"x").expect("archivo temporal");
+    }
+    fs::write(dir.join("sub").join("anidado.mp4"), b"x").expect("archivo anidado");
+    std::os::unix::fs::symlink(dir.join("uno.mp4"), dir.join("enlace.mp4")).expect("enlace");
+
+    let expanded = convert::expand_dropped_folder(&dir);
+
+    assert_eq!(
+        expanded.len(),
+        3,
+        "un nivel, solo archivos regulares y sin seguir enlaces: {expanded:?}"
+    );
+    let mut names: Vec<String> = expanded
+        .iter()
+        .map(|path| convert::base_name(path))
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["dos.mkv", "tres.wav", "uno.mp4"]);
+    assert!(
+        !expanded.iter().any(|path| path.ends_with("enlace.mp4")),
+        "un enlace simbólico no se sigue"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
