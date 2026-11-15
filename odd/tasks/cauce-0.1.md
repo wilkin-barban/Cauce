@@ -807,3 +807,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Mi diagnóstico anterior ("`--no-build` empaqueta un binario viejo") fue **incorrecto**: lo deduje de un `file` cuyo `sed` recortó justo la marca `stripped`. El `.deb` `fb8ff68b…` se construyó **después** de `a0309cc`, así que **incluye el fix**.
 - **No se cambia el empaquetado** ni se persigue ese falso positivo. Queda como referencia: comparar `target/release/*` con el contenido del `.deb` no sirve como verificación de frescura; hay que comparar contra el `.deb` previo (`aa4c9a28…` → `4f42a479…` sí cambió) o mejor, contra el commit/`dpkg -l` y la fecha.
 - Estado para la prueba del usuario: `.deb` `fb8ff68bca953b353729c535469b8d9f1a3eb649a4e5a687cc9a252d6599c7c1`, instalado (`0.1.0-1`), `cauce.socket` **active**.
+
+**L63 (publicación v0.1.0) — hecha y verificada por API:**
+- `main` en `646593f`, árbol limpio, **311 tests**. `.deb` reconstruido **desde el commit final** (sin `--no-build`): `check-package: OK`.
+- Tag **anotado `v0.1.0`** creado sobre ese commit y pusheado. No se movió ningún tag previo.
+- GitHub Release **`Cauce v0.1.0`** publicada: https://github.com/wilkin-barban/Cauce/releases/tag/v0.1.0
+- Verificación por API y descarga real: assets `cauce_0.1.0-1_amd64.deb` (1 844 092 B) y `SHA256SUMS` (104 B); el sha256 del archivo **descargado desde el release** es `fb8ff68bca953b353729c535469b8d9f1a3eb649a4e5a687cc9a252d6599c7c1`, idéntico al local y al de `SHA256SUMS`.
+- Sin atribución de IA en commits ni en el release.
