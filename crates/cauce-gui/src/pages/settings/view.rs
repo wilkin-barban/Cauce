@@ -24,8 +24,8 @@ use serde_json::json;
 
 use super::{
     LANGUAGE_LABELS, LANGUAGES, POLICIES, POLICY_LABELS, SettingsEdit, THEME_LABELS, THEMES,
-    apply_scheme, edit_error, edit_params, index_of, language_at, locale_of, policy_at, theme_at,
-    wire,
+    apply_scheme, edit_error, edit_params, index_of, language_at, locale_of, output_dir_to_show,
+    policy_at, theme_at, wire,
 };
 use crate::client::Client;
 use crate::i18n::t;
@@ -132,6 +132,8 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
         );
         move |_| load(&client, &ui, &current, &guard)
     });
+    // A folder chosen in Convertir repaints this row (`L43`).
+    watch_output_dir(&ui, &current);
     load(client, &ui, &current, &guard);
     ui.page
 }
@@ -317,6 +319,8 @@ fn build_commit(
             });
             match answer {
                 Ok(saved) => {
+                    // Ajustes saves the folder Convertir shows too (`L43`).
+                    crate::pages::set_output_dir(&saved.output_dir);
                     *current.borrow_mut() = Some(saved.clone());
                     render(&ui, &saved, &guard);
                     show_error(&ui, "");
@@ -335,7 +339,8 @@ fn build_commit(
 /// Reflects one settings value in every widget, without re-triggering writes.
 fn render(ui: &Ui, settings: &Settings, guard: &Rc<Cell<bool>>) {
     guard.set(true);
-    ui.output.set_subtitle(&escaped(&settings.output_dir));
+    ui.output
+        .set_subtitle(&escaped(&output_dir_to_show(settings)));
     ui.concurrency
         .set_value(f64::from(settings.max_concurrent_jobs));
     ui.theme
@@ -361,6 +366,17 @@ fn show_error(ui: &Ui, message: &str) {
     }
     ui.banner.set_title(message);
     ui.banner.set_revealed(true);
+}
+
+/// Follows the folder Convertir chooses, without a second `settings.get`.
+fn watch_output_dir(ui: &Ui, current: &Rc<RefCell<Option<Settings>>>) {
+    let (ui, current) = (ui.clone(), Rc::clone(current));
+    crate::pages::on_output_dir_change(Rc::new(move |dir: &str| {
+        ui.output.set_subtitle(&escaped(dir));
+        if let Some(settings) = current.borrow_mut().as_mut() {
+            settings.output_dir = dir.to_owned();
+        }
+    }));
 }
 
 /// The folder dialog of the output directory.

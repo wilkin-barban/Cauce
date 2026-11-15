@@ -13,7 +13,10 @@ use cauce_core::{
 };
 use cauce_gui::pages::diagnostics::{capabilities_report, human_bytes};
 use cauce_gui::pages::presets::{group_presets, preset_detail};
-use cauce_gui::pages::settings::{SettingsEdit, settings_after_edit, theme_from_str, theme_to_str};
+use cauce_gui::pages::settings::{
+    SettingsEdit, edit_params, output_dir_to_show, settings_after_edit, theme_from_str,
+    theme_to_str,
+};
 
 fn settings() -> Settings {
     Settings {
@@ -136,7 +139,6 @@ fn preset_detail_skips_unset_fields() {
     assert_eq!(
         labels,
         [
-            "Nombre",
             "Descripción",
             "Contenedor",
             "Códec de video",
@@ -146,7 +148,8 @@ fn preset_detail_skips_unset_fields() {
             "Faststart",
             "Metadatos",
         ],
-        "sin resolución, sin CRF, sin bitrate, sin FPS y sin bits no hay fila"
+        "el título del panel ya muestra el nombre: sin Nombre duplicado, y sin \
+         resolución, CRF, bitrate, FPS ni bits no hay fila"
     );
     assert!(
         rows.iter().all(|(_, value)| !value.is_empty()),
@@ -172,6 +175,51 @@ fn preset_detail_skips_unset_fields() {
     assert_eq!(find("Bitrate de audio").as_deref(), Some("160k"));
     assert_eq!(find("FPS máximos").as_deref(), Some("60"));
     assert_eq!(find("Profundidad de bits").as_deref(), Some("10 bits"));
+}
+
+#[test]
+fn settings_after_convertir_choice_is_the_one_ajustes_shows() {
+    let base = settings();
+    let chosen = "/home/wilkin/Vídeos/elegida";
+
+    // Sin una elección en esta sesión, Ajustes enseña lo persistido.
+    assert_eq!(
+        output_dir_to_show(&base),
+        base.output_dir,
+        "sin elección, Ajustes muestra la carpeta guardada"
+    );
+
+    // Convertir fija la carpeta en el valor que ambas páginas leen (`L43`).
+    cauce_gui::pages::set_output_dir(chosen);
+    assert_eq!(
+        cauce_gui::pages::output_dir().as_deref(),
+        Some(chosen),
+        "la carpeta elegida queda en el valor compartido"
+    );
+    assert_eq!(
+        output_dir_to_show(&base),
+        chosen,
+        "Ajustes muestra la carpeta que fijó Convertir, no la instantánea vieja del daemon"
+    );
+
+    // La elección se persiste con `settings.set` y sin arrastrar otros campos.
+    let after = settings_after_edit(&base, SettingsEdit::OutputDir(chosen.to_owned()));
+    assert_eq!(after.output_dir, chosen);
+    assert_eq!(after.max_concurrent_jobs, base.max_concurrent_jobs);
+    assert_eq!(
+        edit_params(&SettingsEdit::OutputDir(chosen.to_owned())),
+        serde_json::json!({ "output_dir": chosen }),
+        "`settings.set` recibe solo la carpeta"
+    );
+
+    // Un valor vacío nunca borra la carpeta que ya se conoce.
+    cauce_gui::pages::set_output_dir("   ");
+    assert_eq!(
+        cauce_gui::pages::output_dir().as_deref(),
+        Some(chosen),
+        "un valor vacío no sustituye la carpeta elegida"
+    );
+    assert_eq!(output_dir_to_show(&after), chosen);
 }
 
 #[test]

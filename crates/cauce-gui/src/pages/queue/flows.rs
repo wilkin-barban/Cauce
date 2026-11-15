@@ -151,6 +151,10 @@ fn build_render(
 }
 
 /// One icon-only button per allowed action, with its accessible name.
+///
+/// The visible glyph is never the name: the accessible label and the tooltip are
+/// the translated action, so a card that shows only a ✕ still announces "Eliminar
+/// de la cola" to assistive technology (`odd/tasks/cauce-0.1.md`, L43).
 fn action_button(action: JobAction, job: &Job, act: &Rc<RefCell<Option<Act>>>) -> gtk::Button {
     let button = gtk::Button::from_icon_name(action.icon());
     button.add_css_class("flat");
@@ -166,13 +170,14 @@ fn action_button(action: JobAction, job: &Job, act: &Rc<RefCell<Option<Act>>>) -
     button
 }
 
-/// Open folder / open file for a finished job: text buttons, so the accessible
-/// name is the label and no shell is involved.
+/// Open folder / open file for a finished job: text buttons with the same action
+/// weight as the queue toggle, so they read as buttons and not as grey text. The
+/// label is the accessible name and no shell is involved (`L43`).
 fn open_buttons(row: &Row, job: &Job, open: &Rc<RefCell<Option<Open>>>) {
     for (key, folder) in [("queue.open_folder", true), ("queue.open_file", false)] {
         let label = t(key);
         let button = gtk::Button::with_label(label);
-        button.add_css_class("flat");
+        button.add_css_class("pill");
         button.update_property(&[gtk::accessible::Property::Label(label)]);
         let (open, job) = (Rc::clone(open), job.clone());
         button.connect_clicked(move |_| {

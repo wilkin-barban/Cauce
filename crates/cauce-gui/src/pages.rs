@@ -8,6 +8,7 @@
 //! project. Since T19 an entry carries the *keys* of its names, never the names
 //! themselves, so switching the locale re-renders the sidebar.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use libadwaita as adw;
@@ -56,7 +57,9 @@ pub const SECTIONS: [Section; 5] = [
         id: "diagnostics",
         title_key: "section.diagnostics_title",
         description_key: "section.diagnostics_description",
-        icon: "utilities-system-monitor-symbolic",
+        // `utilities-system-monitor-symbolic` is absent from the Adwaita theme
+        // installed here, so the sidebar painted a faint missing-image box (`L43`).
+        icon: "applications-system-symbolic",
     },
     Section {
         id: "settings",
@@ -82,4 +85,43 @@ pub fn all(client: &Rc<Client>) -> Vec<adw::NavigationPage> {
         diagnostics::page(client),
         settings::page(client),
     ]
+}
+
+/// The hook the Ajustes page registers to follow [`set_output_dir`].
+type OutputDirListener = Rc<dyn Fn(&str)>;
+
+thread_local! {
+    /// The output folder the whole shell agrees on in this session.
+    static OUTPUT_DIR: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The page that repaints when [`set_output_dir`] lands; the last one wins,
+    /// exactly like the locale hook, so a rebuilt page never leaves a stale copy.
+    static OUTPUT_DIR_LISTENER: RefCell<Option<OutputDirListener>> = const { RefCell::new(None) };
+}
+
+/// The output folder Convertir chose in this session, if it chose one.
+///
+/// Convertir keeps the folder in its own state and Ajustes reads `settings.get`,
+/// so before this value existed the two pages disagreed whenever the daemon had
+/// not persisted the choice yet (`odd/tasks/cauce-0.1.md`, L43).
+pub fn output_dir() -> Option<String> {
+    OUTPUT_DIR.with(|slot| slot.borrow().clone())
+}
+
+/// Records the folder Convertir just chose and asks Ajustes to render it. An
+/// empty value never replaces a usable folder.
+pub fn set_output_dir(dir: &str) {
+    let dir = dir.trim();
+    if dir.is_empty() {
+        return;
+    }
+    OUTPUT_DIR.with(|slot| *slot.borrow_mut() = Some(dir.to_owned()));
+    let listener = OUTPUT_DIR_LISTENER.with(|slot| slot.borrow().clone());
+    if let Some(listener) = listener {
+        listener(dir);
+    }
+}
+
+/// Registers the Ajustes renderer; the last registration wins.
+pub fn on_output_dir_change(listener: OutputDirListener) {
+    OUTPUT_DIR_LISTENER.with(|slot| *slot.borrow_mut() = Some(listener));
 }

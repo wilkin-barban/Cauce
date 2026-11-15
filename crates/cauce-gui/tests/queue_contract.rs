@@ -7,6 +7,7 @@
 
 use cauce_core::{Job, JobState, Progress, Timestamp};
 use cauce_gui::i18n::t;
+use cauce_gui::pages::queue::view::bar_fraction;
 use cauce_gui::pages::queue::{JobAction, QueuePhase, QueueState, progress_label};
 
 fn ts(text: &str) -> Timestamp {
@@ -245,6 +246,29 @@ fn indeterminate_progress_renders_without_percent() {
 
     let known = progress_label(Some(42.4), None, None, None);
     assert_eq!(known, "42 %");
+}
+
+#[test]
+fn a_completed_job_paints_a_full_bar_never_the_stale_sample() {
+    // La captura mostró «Completada» con la barra al 96 % (`L43`): un trabajo
+    // completado no puede conservar el último porcentaje que llegó.
+    let cases = [
+        (JobState::Completed, Some(96.0), Some(1.0)),
+        (JobState::Completed, Some(41.5), Some(1.0)),
+        (JobState::Completed, None, Some(1.0)),
+        (JobState::Running, Some(96.0), Some(0.96)),
+        (JobState::Running, None, None),
+        (JobState::Queued, Some(0.0), Some(0.0)),
+        (JobState::Failed, Some(100.0), Some(1.0)),
+    ];
+    for (state, percent, expected) in cases {
+        assert_eq!(
+            bar_fraction(state, percent),
+            expected,
+            "fracción de la barra para `{}` con {percent:?}",
+            state.as_str()
+        );
+    }
 }
 
 #[test]

@@ -19,7 +19,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::{gio, gtk};
-use cauce_core::Job;
+use cauce_core::{Job, JobState};
 use libadwaita as adw;
 
 use super::state::{JobAction, QueueState, progress_label, state_label};
@@ -55,8 +55,10 @@ impl Ui {
     fn build() -> Self {
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&adw::WindowTitle::new(t("section.queue_title"), "")));
+        // A real button, not grey text: the capture showed "Pausar cola" as if it
+        // were a label and nothing suggested it could be pressed (`L43`).
         let queue_toggle = gtk::Button::with_label(t("queue.pause"));
-        queue_toggle.add_css_class("flat");
+        queue_toggle.add_css_class("pill");
         queue_toggle.set_tooltip_text(Some(t("queue.toggle_tooltip")));
         header.pack_end(&queue_toggle);
 
@@ -123,9 +125,16 @@ impl Ui {
         body.append(&stack);
         body.append(&footer);
 
+        // Same card width as Ajustes and Diagnóstico, whose `AdwPreferencesPage`
+        // clamps its content (`L43`).
+        let clamp = adw::Clamp::new();
+        clamp.set_maximum_size(600);
+        clamp.set_tightening_threshold(400);
+        clamp.set_child(Some(&body));
+
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
-        toolbar.set_content(Some(&body));
+        toolbar.set_content(Some(&clamp));
         let page = adw::NavigationPage::new(&toolbar, t("section.queue_title"));
         page.set_tag(Some("queue"));
 
@@ -170,6 +179,8 @@ pub fn row(job: &Job, preset_name: &str) -> Row {
     title.add_css_class("heading");
     let preset = gtk::Label::new(Some(preset_name));
     preset.set_xalign(0.0);
+    preset.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    preset.set_tooltip_text(Some(preset_name));
     preset.add_css_class("dim-label");
     preset.add_css_class("caption");
 
@@ -224,15 +235,28 @@ pub fn row(job: &Job, preset_name: &str) -> Row {
     widgets
 }
 
+/// The fraction the row's bar paints (`None` = indeterminate).
+///
+/// A completed job paints full whatever the last sample said: the capture showed
+/// "Completada" next to a bar stuck at 96 % (`odd/tasks/cauce-0.1.md`, L43).
+/// It is GTK-free and lives here, next to its only caller, to keep the decision
+/// core inside the 400-line rule.
+pub fn bar_fraction(state: JobState, percent: Option<f64>) -> Option<f64> {
+    match (state, percent) {
+        (JobState::Completed, _) => Some(1.0),
+        (_, Some(percent)) => Some((percent / 100.0).clamp(0.0, 1.0)),
+        (_, None) => None,
+    }
+}
+
 /// Refreshes the parts of a row that an event can change, keeping its widgets
 /// (and therefore the keyboard focus) alive.
 pub fn update_row(widgets: &Row, job: &Job) {
     widgets.state.set_label(state_label(job.state));
     let progress = &job.progress;
-    match progress.percent {
-        Some(percent) => {
-            widgets.bar.set_fraction((percent / 100.0).clamp(0.0, 1.0));
-        }
+    // A completed job paints full: the bar never shows a stale 96 % (`L43`).
+    match bar_fraction(job.state, progress.percent) {
+        Some(fraction) => widgets.bar.set_fraction(fraction),
         None => widgets.bar.pulse(),
     }
     widgets.detail.set_label(&progress_label(

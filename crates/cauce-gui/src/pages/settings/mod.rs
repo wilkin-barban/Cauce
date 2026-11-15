@@ -77,6 +77,12 @@ pub fn settings_after_edit(current: &Settings, edit: SettingsEdit) -> Settings {
     next
 }
 
+/// The folder Ajustes shows: the one Convertir chose in this session when there is
+/// one, else the value the daemon persisted (`odd/tasks/cauce-0.1.md`, L43).
+pub fn output_dir_to_show(settings: &Settings) -> String {
+    crate::pages::output_dir().unwrap_or_else(|| settings.output_dir.clone())
+}
+
 /// The `Partial<Settings>` body of `settings.set` for one edit.
 pub fn edit_params(edit: &SettingsEdit) -> serde_json::Value {
     match edit {
