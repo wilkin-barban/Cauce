@@ -1,0 +1,130 @@
+# Cauce CI (docs/architecture.md §17, docs/backlog.md G4, odd/tasks T22/C-052).
+#
+# One job, no matrix, no release step and no secrets: this workflow only proves
+# that the tree formats, lints, tests, opens its window under Xvfb and that the
+# `.deb` installs and passes the `packaging/check-package.sh` gate. Publishing
+# (tag, release, artifacts) is out of scope by S15.
+#
+# `runs-on`: the target platform is Ubuntu 26.04 (architecture.md §6, §16), but
+# GitHub does not publish an `ubuntu-26.04` label yet; an unknown label makes
+# the job never start, which is worse than a slightly older base image. Switch
+# this line to `ubuntu-26.04` once the label is generally available — nothing
+# else here is image-specific.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: fmt, clippy, tests, GUI smoke and clean install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system dependencies
+        # `cargo-deb` is a cargo subcommand, not an apt package; it is installed
+        # in the next step.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            ffmpeg \
+            xvfb \
+            appstream \
+            desktop-file-utils
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint with clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run the test suite
+        run: cargo test --workspace
+
+      - name: GUI smoke under Xvfb
+        # `CAUCE_SMOKE=1` makes the shell print `window-ready` after the first
+        # map and quit by itself. The assertion is on that observable output,
+        # never on an arbitrary sleep (odd/tasks T24/C-061).
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/gui-smoke.log"
+          CAUCE_SMOKE=1 xvfb-run -a cargo run -p cauce-gui 2>&1 | tee "$log"
+          if ! grep -q 'window-ready' "$log"; then
+            echo "::error::la GUI no imprimió window-ready bajo Xvfb"
+            exit 1
+          fi
+
+      - name: Build release workspace
+        run: cargo build --release --workspace
+
+      - name: Build the .deb
+        # One package for the three binaries: the assets of every crate are
+        # described by `[package.metadata.deb]` in cauce-daemon and `--no-build`
+        # repacks the release binaries just built above.
+        run: cargo deb -p cauce-daemon --no-build
+
+      - name: Run the check-package gate
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(target/debian/cauce_*.deb)
+          if [ "${#debs[@]}" -ne 1 ]; then
+            echo "::error::se esperaba un único .deb y hay ${#debs[@]}"
+            exit 1
+          fi
+          bash packaging/check-package.sh "${debs[0]}"
+
+      - name: Clean install of the .deb
+        # The same archive a user would download, installed by APT so that the
+        # system dependencies of §16 are resolved. No root-owned data is touched
+        # beyond the package payload.
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./target/debian/cauce_*.deb
+
+          for bin in cauce-daemon cauce-gui cauce-cli; do
+            test -x "/usr/bin/$bin" || {
+              echo "::error::falta /usr/bin/$bin tras la instalación"
+              exit 1
+            }
+          done
+
+          for unit in cauce.socket cauce.service; do
+            test -f "/usr/lib/systemd/user/$unit" || {
+              echo "::error::falta /usr/lib/systemd/user/$unit tras la instalación"
+              exit 1
+            }
+          done
+
+          appstreamcli validate --no-net \
+            /usr/share/metainfo/io.github.wilkin.Cauce.metainfo.xml
+
+          # The socket is a user unit: enabling it needs a real user session
+          # bus. Without one, the installed unit files asserted above are the
+          # evidence, and the check is not faked with a fake session.
+          if systemctl --user show-environment >/dev/null 2>&1; then
+            systemctl --user enable cauce.socket
+            systemctl --user is-enabled cauce.socket
+          else
+            echo "sin sesión de usuario systemd: se validan solo las unidades instaladas"
+          fi
