@@ -310,3 +310,66 @@ fn a_timed_out_request_closes_the_connection() {
     );
     assert!(rest.is_empty(), "no debe haber tráfico después del cierre");
 }
+
+#[test]
+fn a_timeout_does_not_poison_the_next_request() {
+    // Regression R3-REG-001: the kill signal identifies its connection generation,
+    // so a kill queued by a timed-out connection must never drop the next one.
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("timeout-then-reconnect");
+    let socket = dir.socket();
+
+    let first = std::os::unix::net::UnixListener::bind(&socket).expect("bind del primer servidor");
+    let silent = std::thread::spawn(move || {
+        let (stream, _) = first.accept().expect("aceptar");
+        // Se queda callado a propósito: la petición vence.
+        std::thread::sleep(REQUEST_TIMEOUT + Duration::from_secs(1));
+        drop(stream);
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let timed_out = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect_err("el primer daemon no responde");
+    assert_eq!(timed_out.code, ErrorCode::DaemonUnavailable);
+    let _ = silent.join();
+
+    // Segundo daemon, misma ruta: la llamada siguiente debe funcionar.
+    // El socket del primer servidor queda en disco al cerrarlo; se limpia para
+    // que el segundo pueda tomar la misma ruta, como haría systemd al reiniciar.
+    let _ = fs::remove_file(&socket);
+    let listener = bind(&runtime, &socket);
+    let server_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime del servidor");
+    let serving = std::thread::spawn(move || {
+        server_runtime.block_on(async move {
+            let (stream, _) = listener.accept().await.expect("aceptar");
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("leer");
+            // El id lo elige el cliente: responder con otro lo deja esperando.
+            let request: Value = serde_json::from_str(&line).expect("petición JSON");
+            let reply = json!({
+                "jsonrpc": "2.0",
+                "id": request["id"].clone(),
+                "result": { "protocol_version": 1 },
+            });
+            let mut write = reader.into_inner();
+            write
+                .write_all(format!("{reply}\n").as_bytes())
+                .await
+                .expect("responder");
+            write.flush().await.expect("descarga");
+        })
+    });
+
+    let result = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect("la petición posterior debe reconectar");
+    assert_eq!(result["protocol_version"], json!(1));
+    serving.join().expect("el servidor termina");
+}
