@@ -98,6 +98,54 @@ impl Client {
         response["result"].clone()
     }
 
+    /// Like [`Client::call`], but keeps the notifications that arrived before the
+    /// answer: the daemon may broadcast an event before writing the response, and
+    /// a count of events is only exact if neither side is discarded.
+    fn call_with_events(&mut self, method: &str, params: Value) -> (Value, Vec<Value>) {
+        let id = self.next_id;
+        self.next_id += 1;
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        self.writer
+            .write_all(format!("{request}\n").as_bytes())
+            .expect("escribir");
+        self.writer.flush().expect("flush del socket");
+        let mut events = Vec::new();
+        loop {
+            let response = self.read_message();
+            if response["id"] == json!(id) {
+                return (response, events);
+            }
+            events.push(response);
+        }
+    }
+
+    /// Notifications already buffered by the connection, drained with a short
+    /// deadline so a missing event is an empty list instead of a long wait.
+    fn pending_events(&mut self) -> Vec<Value> {
+        let timeout = Some(Duration::from_secs(30));
+        self.reader
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(150)))
+            .expect("timeout corto");
+        let mut events = Vec::new();
+        loop {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if let Ok(message) = serde_json::from_str::<Value>(line.trim_end()) {
+                        events.push(message);
+                    }
+                }
+            }
+        }
+        self.reader
+            .get_ref()
+            .set_read_timeout(timeout)
+            .expect("timeout");
+        events
+    }
+
     fn error_code(&mut self, method: &str, params: Value) -> String {
         let response = self.call(method, params);
         assert_eq!(
@@ -108,6 +156,49 @@ impl Client {
         let code = response["error"]["code"].as_str().unwrap_or_default();
         code.to_owned()
     }
+}
+
+/// Every `job_events` row of one job, as `(from_state, to_state, reason)`.
+fn event_trail(case: &Case, id: &str) -> Vec<(Option<String>, String, Option<String>)> {
+    let store = case.daemon.store_mut();
+    let mut statement = store
+        .connection()
+        .prepare("SELECT job_id, from_state, to_state, reason FROM job_events ORDER BY id")
+        .expect("preparar los eventos");
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .expect("consultar los eventos");
+    rows.filter_map(Result::ok)
+        .filter(|row| row.0 == id)
+        .map(|row| (row.1, row.2, row.3))
+        .collect()
+}
+
+/// The `(id, state)` pairs of a `jobs.list` answer.
+fn listed(list: &Value) -> Vec<(String, String)> {
+    list.as_array()
+        .expect("un array de trabajos")
+        .iter()
+        .map(|job| {
+            let id = job["id"].as_str().unwrap_or_default().to_owned();
+            let state = job["state"].as_str().unwrap_or_default().to_owned();
+            (id, state)
+        })
+        .collect()
+}
+
+fn broadcasts(events: &[Value]) -> usize {
+    events
+        .iter()
+        .filter(|event| event["method"] == json!("queue.updated"))
+        .count()
 }
 
 /// One in-process daemon with its own directories and a connected client.
@@ -360,6 +451,164 @@ fn queue_pause_is_reported() {
     assert_eq!(event["params"]["paused"], json!(true));
     let resumed = case.client.result("queue.resume", json!({}));
     assert_eq!(resumed["paused"], json!(false));
+}
+
+#[test]
+fn queue_start_unpauses_and_keeps_the_jobs() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("queue-start");
+    let (paused, mut pause_events) = case.client.call_with_events("queue.pause", json!({}));
+    assert_eq!(paused["result"]["paused"], json!(true));
+    pause_events.extend(case.client.pending_events());
+    assert_eq!(
+        broadcasts(&pause_events),
+        1,
+        "`queue.pause` avisa una vez: {pause_events:?}"
+    );
+
+    let first = case.add_one_job(&fixture, "system-smarttv-compat");
+    case.add_one_job(&fixture, "system-smarttv-compat");
+    let before = case.client.result("jobs.list", json!({}));
+    assert_eq!(
+        before.as_array().map(Vec::len),
+        Some(2),
+        "dos trabajos: {before}"
+    );
+
+    let (started, mut events) = case.client.call_with_events("queue.start", json!({}));
+    assert_eq!(
+        started["result"],
+        json!({"paused": false}),
+        "`queue.start` activa la cola: {started}"
+    );
+    // Drained before the next request: a request swallows the events it skips.
+    events.extend(case.client.pending_events());
+
+    let after = case.client.result("jobs.list", json!({}));
+    assert_eq!(
+        listed(&after),
+        listed(&before),
+        "los mismos ids y estados: {after}"
+    );
+    assert_eq!(listed(&after)[0].0, first["id"], "la lista no se reordena");
+    assert_eq!(
+        broadcasts(&events),
+        1,
+        "un solo `queue.updated`: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["params"]["paused"] == json!(false)),
+        "el evento dice que la cola está activa: {events:?}"
+    );
+}
+
+#[test]
+fn queue_start_is_a_no_op_when_active() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("queue-start-noop");
+    let job = case.add_one_job(&fixture, "system-smarttv-compat");
+    let before = case.client.result("jobs.list", json!({}));
+    let (started, mut events) = case.client.call_with_events("queue.start", json!({}));
+    assert_eq!(started["result"], json!({"paused": false}), "{started}");
+    // Drained before the next request: a request swallows the events it skips.
+    events.extend(case.client.pending_events());
+    let after = case.client.result("jobs.list", json!({}));
+    assert_eq!(listed(&after), listed(&before), "nada cambia: {after}");
+    assert_eq!(listed(&after)[0].0, job["id"], "el trabajo sigue ahí");
+    assert_eq!(
+        broadcasts(&events),
+        1,
+        "un solo `queue.updated`: {events:?}"
+    );
+}
+
+#[test]
+fn jobs_recover_requeues_an_interrupted_job_once() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("jobs-recover");
+    let job = case.add_one_job(&fixture, "system-smarttv-compat");
+    let id = job["id"].as_str().expect("id").to_owned();
+    {
+        let mut store = case.daemon.store_mut();
+        for state in [JobState::Probing, JobState::Running, JobState::Interrupted] {
+            store.transition(&id, state, "tests").expect("sembrar");
+        }
+    }
+    assert_eq!(
+        case.client.result("jobs.get", json!({"id": id}))["state"],
+        json!("interrupted")
+    );
+
+    let (recovered, mut events) = case
+        .client
+        .call_with_events("jobs.recover", json!({"id": id}));
+    assert!(recovered.get("error").is_none(), "{recovered}");
+    let recovered = recovered["result"].clone();
+    assert_eq!(recovered["id"], json!(id));
+    assert_eq!(recovered["state"], json!("queued"), "vuelve a la cola");
+    events.extend(case.client.pending_events());
+    let updated = events
+        .iter()
+        .filter(|event| event["method"] == json!("job.updated"))
+        .count();
+    assert_eq!(updated, 1, "un solo `job.updated`: {events:?}");
+
+    let again = case.client.error_code("jobs.recover", json!({"id": id}));
+    assert_eq!(again, "INVALID_INPUT", "reencolar dos veces se rechaza");
+    let missing = case
+        .client
+        .error_code("jobs.recover", json!({"id": "no-existe"}));
+    assert_eq!(
+        missing, "INVALID_INPUT",
+        "un id desconocido no entra en pánico"
+    );
+
+    let trail = event_trail(&case, &id);
+    let requeues: Vec<_> = trail
+        .iter()
+        .filter(|(_, to, reason)| to == "queued" && reason.as_deref() == Some("recovery"))
+        .collect();
+    assert_eq!(requeues.len(), 1, "un único reencolado: {trail:?}");
+    assert_eq!(
+        trail.last(),
+        Some(&(
+            Some("interrupted".to_owned()),
+            "queued".to_owned(),
+            Some("recovery".to_owned())
+        )),
+        "el último evento explica el reencolado: {trail:?}"
+    );
+}
+
+#[test]
+fn jobs_recover_rejects_other_states() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("jobs-recover-states");
+    let job = case.add_one_job(&fixture, "system-smarttv-compat");
+    let id = job["id"].as_str().expect("id").to_owned();
+    {
+        let mut store = case.daemon.store_mut();
+        store
+            .transition(&id, JobState::Probing, "tests")
+            .expect("queued/probing");
+        store
+            .transition(&id, JobState::Running, "tests")
+            .expect("probing/running");
+    }
+    let code = case.client.error_code("jobs.recover", json!({"id": id}));
+    assert_eq!(code, "INVALID_INPUT", "solo `interrupted` se reencola");
+    let untouched = case.client.result("jobs.get", json!({"id": id}));
+    assert_eq!(untouched["state"], json!("running"), "el estado no se toca");
 }
 
 #[test]

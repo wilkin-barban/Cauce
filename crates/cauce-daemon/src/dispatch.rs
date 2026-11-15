@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use cauce_core::{
     DuplicatePolicy, ErrorCode, Job, JobAction, JobError, JobState, MediaSnapshot, Progress,
-    Settings, Timestamp, plan_conversion, resolve_output_path, system_presets,
+    Settings, Timestamp, plan_conversion, resolve_output_path, system_presets, transition_for,
 };
 use cauce_ffmpeg::runner::ConversionChild;
 use cauce_jobs::Store;
@@ -32,6 +32,10 @@ use crate::socket;
 
 /// Highest absolute priority accepted over IPC (`docs/contracts.md` §2.4).
 const PRIORITY_LIMIT: i32 = 1000;
+
+/// Reason written for the requeue of an `interrupted` job: it is the recovery
+/// path of `docs/contracts.md` §4, not a plain user action.
+const REASON_RECOVERY: &str = "recovery";
 
 /// Daemon state: the single writer of the database, the event bus and the child
 /// processes the orchestrator owns in memory.
@@ -108,9 +112,12 @@ impl Daemon {
             "jobs.resume" => self.job_action(params, JobAction::Resume),
             "jobs.cancel" => self.job_action(params, JobAction::Cancel),
             "jobs.retry" => self.job_action(params, JobAction::Retry),
+            "jobs.recover" => self.jobs_recover(params),
             "jobs.remove" => self.jobs_remove(params),
             "queue.pause" => self.set_queue(true),
-            "queue.resume" => self.set_queue(false),
+            // `queue.start` is the explicit alias of `queue.resume`: one handler,
+            // so there is no second path that could start a job twice.
+            "queue.resume" | "queue.start" => self.set_queue(false),
             "logs.list" => self.logs_list(params),
             other => {
                 self.events
@@ -414,6 +421,31 @@ impl Daemon {
             );
         }
         true
+    }
+
+    /// `interrupted -> queued` for one job (`docs/contracts.md` §4 and §6).
+    ///
+    /// The action is resolved through `cauce_core::transition_for` and written by
+    /// the store's own transition, so an unknown id or any other state is refused
+    /// with `INVALID_INPUT` and nothing is written. The `recovery` reason records
+    /// that this was the recovery path and not `jobs.retry`.
+    fn jobs_recover(&self, params: Option<&Value>) -> Result<Value, JobError> {
+        let id = protocol::string_param(params, "id")?;
+        let job = {
+            let mut store = self.store_mut();
+            let current = store
+                .get_job(&id)?
+                .ok_or_else(|| protocol::invalid(format!("No existe el trabajo `{id}`.")))?;
+            let target = transition_for(JobAction::Recover, current.state)?;
+            store.transition(&id, target, REASON_RECOVERY)?
+        };
+        self.events.job_updated(&job);
+        self.events.log(
+            "info",
+            "queue",
+            format!("trabajo `{id}` reencolado tras una interrupción"),
+        );
+        protocol::encode(&job)
     }
 
     fn jobs_remove(&self, params: Option<&Value>) -> Result<Value, JobError> {
