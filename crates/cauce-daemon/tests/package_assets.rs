@@ -16,6 +16,12 @@
 //! `desktop_and_appstream_validate` runs the distribution validators when they
 //! exist and fails on their exit status; when a validator is missing the test
 //! prints a loud skip instead of passing silently.
+//!
+//! `package_description_is_truthful` and `unit_files_harden_the_socket` follow
+//! `packaging/check-package.sh` (`odd/tasks/cauce-0.1.md` T21/C-051): the very
+//! two defects the gate reports, kept in the suite so a regression fails here
+//! too (the short description inherited from the daemon crate, and the socket
+//! hardening directives of the installed units).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -364,6 +370,69 @@ fn desktop_and_appstream_validate() {
         }
         None => eprintln!("SKIP desktop_and_appstream_validate: appstreamcli no está instalado"),
     }
+}
+
+/// The short `description` the `.deb` inherits into its `Description:` field.
+///
+/// It is the `[package]` description of the daemon crate, so a wrong text here
+/// is exactly the misleading `dpkg-deb -I` line recorded in `L35`: the package
+/// ships three binaries, not only a headless daemon.
+fn crate_description(manifest: &str) -> String {
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("description") {
+            let value = rest.trim_start().strip_prefix('=').unwrap_or_else(|| {
+                panic!("description debe ser `description = \"...\"`, y es {line:?}")
+            });
+            return value
+                .trim()
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or_else(|| {
+                    panic!("description debe ser una cadena entrecomillada: {line:?}")
+                })
+                .to_string();
+        }
+    }
+    panic!("[package] debe declarar description");
+}
+
+#[test]
+fn package_description_is_truthful() {
+    let description = crate_description(&deb_manifest());
+
+    assert!(
+        description.contains("Cauce"),
+        "la descripción corta debe mencionar Cauce: {description:?}"
+    );
+    assert!(
+        !description.to_lowercase().contains("headless daemon"),
+        "la descripción corta no debe decir `headless daemon`: el paquete trae tres \
+         binarios (daemon, GUI y CLI): {description:?}"
+    );
+    assert_eq!(
+        description, "Cauce: native media converter (daemon, GUI and CLI)",
+        "la línea `Description:` de dpkg-deb -I debe describir el paquete completo"
+    );
+}
+
+#[test]
+fn unit_files_harden_the_socket() {
+    let socket = read_packaging("packaging/cauce.socket");
+    for directive in ["SocketMode=0600", "DirectoryMode=0700"] {
+        assert!(
+            socket.lines().any(|line| line.trim() == directive),
+            "cauce.socket debe declarar {directive} (docs/contracts.md §5)"
+        );
+    }
+
+    let service = read_packaging("packaging/cauce.service");
+    assert!(
+        service
+            .lines()
+            .any(|line| line.trim() == "ExecStart=/usr/bin/cauce-daemon"),
+        "cauce.service debe declarar ExecStart=/usr/bin/cauce-daemon"
+    );
 }
 
 /// `PATH` lookup without pulling a dependency for two optional validators.

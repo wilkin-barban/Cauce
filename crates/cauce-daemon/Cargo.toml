@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Cauce headless daemon owning the queue and conversions"
+# This description is also the short `Description:` line of the single `cauce`
+# `.deb` (`dpkg-deb -I`), which ships three binaries, not just this crate's
+# daemon: the old text said `Cauce headless daemon ...` and misled the package
+# metadata (`odd/tasks/cauce-0.1.md` L35, T21/C-051).
+description = "Cauce: native media converter (daemon, GUI and CLI)"
 
 [dependencies]
 cauce-core = { path = "../cauce-core" }
