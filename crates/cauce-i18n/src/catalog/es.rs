@@ -78,6 +78,7 @@ pub const ENTRIES: &[(&str, &str)] = &[
         "convert.daemon_no_data",
         "El daemon no devolvió datos para este archivo.",
     ),
+    ("convert.details", "Detalles"),
     ("convert.drop_hint", "Arrastrá videos, audios o una carpeta"),
     ("convert.folder_dialog", "Elegir carpeta de salida"),
     ("convert.inspecting", "Inspeccionando con FFprobe…"),

@@ -296,6 +296,21 @@ pub fn plan_summary(plan: &ConversionPlan) -> String {
     format!("{video} · {audio} · {subtitles} → {}", plan.container)
 }
 
+/// The single line the page shows without expanding anything: the summary is a
+/// sentence, so it never grows the page in height (`L43`).
+pub fn plan_headline(plan: &ConversionPlan) -> String {
+    plan_summary(plan)
+}
+
+/// Everything the "Detalles" disclosure holds: the full summary first and then
+/// every `reasoning[]` line the daemon sent, in its own order.
+pub fn plan_details(plan: &ConversionPlan) -> Vec<String> {
+    let mut lines = Vec::with_capacity(plan.reasoning.len() + 1);
+    lines.push(plan_headline(plan));
+    lines.extend(plan.reasoning.iter().cloned());
+    lines
+}
+
 impl ConvertState {
     /// Paths still waiting for an inspection answer.
     pub fn pending_paths(&self) -> &[String] {

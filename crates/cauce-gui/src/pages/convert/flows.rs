@@ -14,7 +14,7 @@ use cauce_core::{Capabilities, ConversionPlan, Job, MediaSnapshot, Preset, Setti
 use libadwaita as adw;
 use serde_json::json;
 
-use super::state::{ConvertState, expand_dropped_folder, plan_summary};
+use super::state::{ConvertState, expand_dropped_folder, plan_details, plan_headline};
 use super::view::{self, Ui, clear_plan, parent_window, text_line};
 use crate::client::Client;
 use crate::i18n::{localized_preset_name, t};
@@ -43,7 +43,7 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
         move |_| run_queue()
     });
     ui.output_button
-        .connect_clicked(output_handle(ui, state, &refresh, &run_plan));
+        .connect_clicked(output_handle(ui, client, state, &refresh, &run_plan));
     ui.preset_combo.connect_selected_notify({
         let (state, presets) = (Rc::clone(state), Rc::clone(&presets));
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
@@ -128,8 +128,13 @@ fn plan_handle(ui: &Ui, client: &Rc<Client>, state: &Rc<RefCell<ConvertState>>) 
             let Ok(plan) = serde_json::from_value::<ConversionPlan>(value) else {
                 return;
             };
-            ui.plan_summary_line.set_label(&plan_summary(&plan));
-            for reason in plan.reasoning.iter() {
+            // One visible line and a closed disclosure with the full summary and
+            // every `reasoning[]` line (`L43`).
+            let details = plan_details(&plan);
+            ui.plan_summary_line.set_label(&plan_headline(&plan));
+            ui.plan_details_line
+                .set_label(details.first().map(String::as_str).unwrap_or_default());
+            for reason in details.iter().skip(1) {
                 let line = text_line("dim-label");
                 line.set_label(reason);
                 ui.plan_reasons.append(&line);
@@ -279,21 +284,22 @@ fn picker_handle(ui: &Ui, add_paths: &Rc<dyn Fn(Vec<String>)>, folder: bool) -> 
     })
 }
 
-/// Chooses the output folder and previews the plan again.
+/// Chooses the output folder, records it for Ajustes and previews the plan again.
 fn output_handle(
     ui: &Ui,
+    client: &Rc<Client>,
     state: &Rc<RefCell<ConvertState>>,
     refresh: &Rc<dyn Fn()>,
     run_plan: &Rc<dyn Fn()>,
 ) -> impl Fn(&gtk::Button) + 'static {
-    let (drop_zone, state) = (ui.drop_zone.clone(), Rc::clone(state));
+    let (drop_zone, client, state) = (ui.drop_zone.clone(), Rc::clone(client), Rc::clone(state));
     let (refresh, run_plan) = (Rc::clone(refresh), Rc::clone(run_plan));
     move |_| {
         let dialog = gtk::FileDialog::new();
         dialog.set_title(t("convert.folder_dialog"));
         let parent = parent_window(&drop_zone);
-        let (state, refresh, run_plan) =
-            (Rc::clone(&state), Rc::clone(&refresh), Rc::clone(&run_plan));
+        let (client, state) = (Rc::clone(&client), Rc::clone(&state));
+        let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         glib::spawn_future_local(async move {
             let Ok(folder) = dialog.select_folder_future(parent.as_ref()).await else {
                 return;
@@ -301,11 +307,18 @@ fn output_handle(
             let Some(path) = folder.path() else {
                 return;
             };
-            state
-                .borrow_mut()
-                .set_output_dir(Some(path.to_string_lossy().into_owned()));
+            let chosen = path.to_string_lossy().into_owned();
+            state.borrow_mut().set_output_dir(Some(chosen.clone()));
+            // The folder is persisted and shared, so Ajustes shows the folder the
+            // user picked here instead of its own stale `settings.get` (`L43`).
+            crate::pages::set_output_dir(&chosen);
             refresh();
             run_plan();
+            let params = json!({ "output_dir": chosen });
+            if let Err(error) = client.call("settings.set", params).await {
+                state.borrow_mut().set_error(error.message);
+                refresh();
+            }
         });
     }
 }
@@ -357,7 +370,11 @@ fn bootstrap(
             .ok()
             .and_then(|value| serde_json::from_value::<Settings>(value).ok());
         if let Some(settings) = settings {
-            state.borrow_mut().set_output_dir(Some(settings.output_dir));
+            // A folder chosen here in this session wins over the daemon's snapshot,
+            // which may be one write behind (`L43`).
+            let dir = crate::pages::output_dir().unwrap_or(settings.output_dir);
+            crate::pages::set_output_dir(&dir);
+            state.borrow_mut().set_output_dir(Some(dir));
             refresh();
             run_plan();
         }

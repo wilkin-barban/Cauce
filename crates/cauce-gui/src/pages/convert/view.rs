@@ -21,7 +21,7 @@ use super::state::{
     ConvertPhase, ConvertState, FFMPEG_COMMAND, RejectedInput, base_name, summarize,
 };
 use crate::client::Client;
-use crate::i18n::{localized_preset_description, t};
+use crate::i18n::{localized_preset_description, localized_preset_name, t};
 
 /// Catalog key of the drop zone (`docs/ui-mvp.md` §4). The key, not the sentence:
 /// `pages::convert` re-exports it and the view translates it at build time.
@@ -45,9 +45,11 @@ pub struct Ui {
     pub output_row: adw::ActionRow,
     pub output_button: gtk::Button,
     pub preset_combo: adw::ComboRow,
-    pub preset_description: gtk::Label,
+    pub preset_group: adw::PreferencesGroup,
     pub plan_box: gtk::Box,
     pub plan_summary_line: gtk::Label,
+    pub plan_details: gtk::Expander,
+    pub plan_details_line: gtk::Label,
     pub plan_reasons: gtk::Box,
     pub confirm_label: gtk::Label,
     pub queue_button: gtk::Button,
@@ -107,24 +109,40 @@ impl Ui {
         let preset_combo = adw::ComboRow::new();
         preset_combo.set_title(t("convert.output_format"));
         preset_combo.set_model(Some(&gtk::StringList::new(&[t("convert.loading_presets")])));
-        let preset_description = text_line("dim-label");
-        preset_description.set_visible(false);
+        // The description lives with the preset, once: the capture showed it as a
+        // detached grey line that also repeated the plan summary (`L43`).
         let preset_group = adw::PreferencesGroup::new();
         preset_group.set_title(t("convert.preset_group"));
         preset_group.add(&preset_combo);
 
-        let plan_summary_line = text_line("body");
+        // One visible line, and the technical detail behind a closed disclosure: the
+        // long summary pushed "Añadir a la cola" below the fold at 960×640 (`L43`).
+        let plan_summary_line = gtk::Label::new(None);
+        plan_summary_line.set_xalign(0.0);
+        plan_summary_line.set_lines(1);
+        plan_summary_line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        plan_summary_line.set_widget_name("plan-headline");
+        let plan_details_line = text_line("dim-label");
         let plan_reasons = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        plan_reasons.set_widget_name("plan-reasons");
+        let details_body = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        details_body.append(&plan_details_line);
+        details_body.append(&plan_reasons);
+        let plan_details = gtk::Expander::new(Some(t("convert.details")));
+        plan_details.set_expanded(false);
+        plan_details.set_child(Some(&details_body));
         let plan_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
         plan_box.append(&heading(t("convert.plan_heading")));
         plan_box.append(&plan_summary_line);
-        plan_box.append(&plan_reasons);
+        plan_box.append(&plan_details);
+        plan_box.set_widget_name("plan-box");
         plan_box.set_visible(false);
 
         let confirm_label = text_line("success");
         confirm_label.set_visible(false);
 
         let queue_button = gtk::Button::with_label(t("convert.queue_button"));
+        queue_button.set_widget_name("queue-cta");
         queue_button.add_css_class("suggested-action");
         queue_button.add_css_class("pill");
         queue_button.set_halign(gtk::Align::Start);
@@ -159,13 +177,19 @@ impl Ui {
         body.append(&error_label);
         body.append(&output_group);
         body.append(&preset_group);
-        body.append(&preset_description);
         body.append(&plan_box);
         body.append(&confirm_label);
         body.append(&queue_button);
 
+        // Same card width as Ajustes and Diagnóstico, whose `AdwPreferencesPage`
+        // clamps its content, so the shell reads as one interface (`L43`).
+        let clamp = adw::Clamp::new();
+        clamp.set_maximum_size(600);
+        clamp.set_tightening_threshold(400);
+        clamp.set_child(Some(&body));
+
         let scroll = gtk::ScrolledWindow::new();
-        scroll.set_child(Some(&body));
+        scroll.set_child(Some(&clamp));
         scroll.set_vexpand(true);
         let stack = gtk::Stack::new();
         stack.add_named(&scroll, Some("main"));
@@ -193,9 +217,11 @@ impl Ui {
             output_row,
             output_button,
             preset_combo,
-            preset_description,
+            preset_group,
             plan_box,
             plan_summary_line,
+            plan_details,
+            plan_details_line,
             plan_reasons,
             confirm_label,
             queue_button,
@@ -251,7 +277,34 @@ pub fn clear_plan(ui: &Ui) {
     while let Some(child) = ui.plan_reasons.first_child() {
         ui.plan_reasons.remove(&child);
     }
+    ui.plan_summary_line.set_label("");
+    ui.plan_details_line.set_label("");
+    // A new plan opens closed, so the page never inherits the height of the last
+    // expansion (`L43`).
+    ui.plan_details.set_expanded(false);
     ui.plan_box.set_visible(false);
+}
+
+/// Truncates the value `AdwComboRow` builds internally and puts the full name in
+/// the row's tooltip: the control exposes no accessor for that `GtkLabel`, and a
+/// long preset name used to be cut with no way to read it (`L43`).
+fn ellipsize_value(row: &adw::ComboRow, selected: &str) {
+    row.set_tooltip_text(Some(selected));
+    let widget: gtk::Widget = row.clone().upcast();
+    ellipsize_labels(&widget, selected);
+}
+
+fn ellipsize_labels(widget: &gtk::Widget, selected: &str) {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+        if label.text() == selected {
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        ellipsize_labels(&current, selected);
+        child = current.next_sibling();
+    }
 }
 
 pub fn file_row(snapshot: &MediaSnapshot) -> adw::ActionRow {
@@ -295,12 +348,12 @@ pub fn refresh(
         ui.output_row
             .set_subtitle(state.output_dir().unwrap_or(t("convert.not_chosen")));
         // The ratified column of the current locale, never a catalog key.
-        let description = state.preset_id().and_then(|id| {
+        let preset = state.preset_id().and_then(|id| {
             presets
                 .borrow()
                 .iter()
                 .find(|preset| preset.id == id)
-                .map(|preset| localized_preset_description(preset).to_owned())
+                .cloned()
         });
         ui.phase_label.set_visible(state.error().is_none());
         ui.phase_label.set_label(match state.phase() {
@@ -309,9 +362,10 @@ pub fn refresh(
             ConvertPhase::Partial => t("convert.phase_partial"),
             _ => "",
         });
-        ui.preset_description.set_visible(description.is_some());
-        if let Some(text) = description {
-            ui.preset_description.set_label(&text);
+        ui.preset_group
+            .set_description(preset.as_ref().map(localized_preset_description));
+        if let Some(preset) = preset {
+            ellipsize_value(&ui.preset_combo, localized_preset_name(&preset));
         }
         ui.queue_button.set_sensitive(state.can_queue());
         match state.blocking() {
