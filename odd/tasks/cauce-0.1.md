@@ -443,3 +443,14 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Ocupan slot: `probing`, `running`, `paused`, `validating`, `cancelling`.
 - Limitación conocida: transicionar a `failed` sin `error_code` persistido viola el CHECK del esquema; el daemon deberá guardar el error antes de la transición (T13).
 - Corte: 146 (state) + 262 (tests) + 156 (scheduler con tests) + 128 (transitions) + 356 (tests).
+
+**L19 (T13a · C-032, primera mitad) — RED, GREEN y política de socket:**
+- RED real: `E0433/E0432` por `cauce_daemon` inexistente y por `cauce_jobs`/`cauce_ffmpeg`/`tokio` no declarados en los tests (22 errores).
+- GREEN: 7 tests de seguridad de transporte + 13 de métodos (20 en `cauce-daemon`); suite 175/175; fmt y clippy limpios.
+- Socket en `$XDG_RUNTIME_DIR/cauce/daemon.sock` (dir 0700, socket 0600), `SO_PEERCRED` con la misma UID, NDJSON con tope de 1 MiB, cierre de la conexión ante mensaje inválido o sobredimensionado, y `unlink` del socket viejo solo si nadie contesta.
+- Respuestas reales verificadas: `initialize` → `{"protocol_version":1,"server_version":"0.1.0"}`; `system.capabilities` con FFmpeg 8.0.1, 6 núcleos y disco libre.
+- `cauce_ffmpeg::probe::probe_file` invoca `ffprobe` y parsea con `cauce_core::probe::parse_ffprobe` (sin duplicar el parser).
+- Raíz autorizada en v0.1: `$HOME` (el portal no tiene campo de concesión en el protocolo todavía); una ruta fuera → `PATH_DENIED` con test y sonda negativa.
+- **Segundo test flaky corregido**: `toolchain.rs` sufría el mismo `ETXTBSY` que T10 (fakes compartidos por PID). Se aplicó carpeta única + publicación atómica ejecutable (`chmod` sobre el archivo staged y después `rename`). Verificado con **10 corridas del workspace completo, 0 fallos**.
+- Gaps documentados para T13b: `jobs.remove` devuelve `INTERNAL "no disponible todavía"` (falta `Store::remove_job`), no hay bucle de conversión (sin `job.progress`), `log.entry` no se emite (solo ring en memoria) y la pausa de cola vive solo en memoria.
+- Corte: 130 (probe) · 397 (protocolo + eventos) · 245 (socket) · 62 (ids) · 390 (dispatch) · 255 (serve + main) · 260 y 400 (tests).
