@@ -99,9 +99,12 @@ pub fn placeholder(section: &Section) -> adw::NavigationPage {
 pub fn all(client: &Rc<Client>) -> Vec<adw::NavigationPage> {
     let mut pages = Vec::with_capacity(SECTIONS.len());
     for section in SECTIONS.iter() {
-        pages.push(placeholder(section));
+        if section.id == "convert" {
+            pages.push(convert::page(client));
+        } else {
+            pages.push(placeholder(section));
+        }
     }
-    let _ = client;
     pages
 }
 

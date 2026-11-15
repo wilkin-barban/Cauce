@@ -62,7 +62,7 @@ fn build(application: &adw::Application) -> adw::ApplicationWindow {
         .build();
 
     let client = Rc::new(Client::connect());
-    let content = Rc::new(pages::all());
+    let content = Rc::new(pages::all(&client));
 
     let banner = adw::Banner::new(OFFLINE_BANNER);
     banner.set_button_label(Some("Reconectar"));
