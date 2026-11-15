@@ -8,15 +8,37 @@
 use std::path::Path;
 use std::time::Duration;
 
-use cauce_core::{DuplicatePolicy, ErrorCode, JobError, Language, Settings, Theme};
+use cauce_core::{
+    ConversionPlan, DuplicatePolicy, ErrorCode, JobError, Language, MediaSnapshot, Progress,
+    Settings, Theme,
+};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::Value as JsonValue;
 
 use crate::migrations::{self, MIGRATIONS, seed_system_presets};
 use crate::sql;
-use crate::sql_support::{internal, json_error, sql_error};
+use crate::sql_support::{
+    code_text, internal, json_error, plan_text, probe_text, progress_text, sql_error,
+};
 
 const BUSY_TIMEOUT_MS: u64 = 5_000;
+
+/// Writes the frozen probe and plan of a job before it starts running
+/// (`docs/contracts.md` §3: a persisted plan is never recomputed).
+const UPDATE_PROBE_AND_PLAN: &str =
+    "UPDATE jobs SET probe_json = ?2, plan_json = ?3, updated_at = ?4 WHERE id = ?1";
+
+/// The temporary output, present only while a job is active.
+const UPDATE_TEMP_PATH: &str = "UPDATE jobs SET temp_path = ?2, updated_at = ?3 WHERE id = ?1";
+
+/// Error columns. The schema requires `error_code` on a `failed` row, so this
+/// runs *before* the transition to `failed` (`docs/data-model.md` §2.2).
+const UPDATE_ERROR: &str =
+    "UPDATE jobs SET error_code = ?2, error_message = ?3, updated_at = ?4 WHERE id = ?1";
+
+/// `progress_json` and `updated_at` only: a sample is not a state change and
+/// writes no `job_events` row (`docs/data-model.md` §3 "Progreso").
+const UPDATE_PROGRESS: &str = "UPDATE jobs SET progress_json = ?2, updated_at = ?3 WHERE id = ?1";
 
 #[derive(Debug)]
 pub struct Store {
@@ -122,6 +144,75 @@ impl Store {
         tx.commit()
             .map_err(|error| sql_error(error, "confirmar los ajustes"))
     }
+
+    /// Persists the probe of the input and the plan the conversion will replay.
+    pub fn set_probe_and_plan(
+        &mut self,
+        id: &str,
+        probe: &MediaSnapshot,
+        plan: &ConversionPlan,
+    ) -> Result<(), JobError> {
+        let probe = probe_text(probe)?;
+        let plan = plan_text(plan)?;
+        let now = migrations::utc_now()?;
+        let changed = self
+            .conn
+            .execute(
+                UPDATE_PROBE_AND_PLAN,
+                params![id, probe, plan, now.as_str()],
+            )
+            .map_err(|error| sql_error(error, "guardar el probe y el plan"))?;
+        require_row(changed, id)
+    }
+
+    /// Records (or clears) the temporary output of an active job.
+    pub fn set_temp_path(&mut self, id: &str, temp: Option<&str>) -> Result<(), JobError> {
+        let now = migrations::utc_now()?;
+        let changed = self
+            .conn
+            .execute(UPDATE_TEMP_PATH, params![id, temp, now.as_str()])
+            .map_err(|error| sql_error(error, "guardar el temporal"))?;
+        require_row(changed, id)
+    }
+
+    /// Stores the error of a job. Must run before the transition to `failed`:
+    /// the schema refuses a `failed` row without `error_code`.
+    pub fn set_error(&mut self, id: &str, error: &JobError) -> Result<(), JobError> {
+        let code = code_text(error.code)?;
+        let now = migrations::utc_now()?;
+        let changed = self
+            .conn
+            .execute(
+                UPDATE_ERROR,
+                params![id, code, &error.message, now.as_str()],
+            )
+            .map_err(|sql_error_value| sql_error(sql_error_value, "guardar el error"))?;
+        require_row(changed, id)
+    }
+
+    /// Stores one progress sample. Called at most once per second per job
+    /// (`docs/contracts.md` §7); it never touches the state nor the events.
+    pub fn save_progress(&mut self, id: &str, progress: &Progress) -> Result<(), JobError> {
+        let encoded = progress_text(progress)?;
+        let now = migrations::utc_now()?;
+        let changed = self
+            .conn
+            .execute(UPDATE_PROGRESS, params![id, encoded, now.as_str()])
+            .map_err(|error| sql_error(error, "guardar el progreso"))?;
+        require_row(changed, id)
+    }
+}
+
+/// A single-row write that matched nothing names an unknown job, never silence.
+fn require_row(changed: usize, id: &str) -> Result<(), JobError> {
+    if changed == 0 {
+        return Err(JobError::new(
+            ErrorCode::InvalidInput,
+            format!("No existe el trabajo `{id}`."),
+            false,
+        ));
+    }
+    Ok(())
 }
 
 /// Defaults from `docs/contracts.md` §2.6 and `docs/ui-mvp.md` §8.

@@ -26,6 +26,14 @@ const UPDATE_JOB_STATE: &str = "UPDATE jobs SET state = ?2, updated_at = ?3, \
 const COUNT_ACTIVE: &str = "SELECT count(*) FROM jobs \
      WHERE state IN ('probing', 'running', 'paused', 'validating', 'cancelling')";
 
+/// States a removal must never delete: a live process or a reservation is still
+/// referenced by the scheduler (`docs/data-model.md` §5).
+const REMOVABLE_REFUSED: [&str; 5] = ["probing", "running", "paused", "validating", "cancelling"];
+
+const DELETE_JOB_EVENTS: &str = "DELETE FROM job_events WHERE job_id = ?1";
+const DELETE_RESERVATION: &str = "DELETE FROM output_reservations WHERE job_id = ?1";
+const DELETE_JOB: &str = "DELETE FROM jobs WHERE id = ?1";
+
 impl Store {
     /// Validates the transition against the core table, then updates the job and
     /// appends the `job_events` row in one transaction.
@@ -106,6 +114,40 @@ impl Store {
             .query_row(COUNT_ACTIVE, [], |row| row.get(0))
             .map_err(|error| sql_error(error, "contar los trabajos activos"))?;
         Ok(usize::try_from(count).unwrap_or(0))
+    }
+
+    /// Deletes a terminal job with its events and its output reservation in one
+    /// transaction (`docs/data-model.md` §5).
+    ///
+    /// A job that still owns a process or a reservation is refused with
+    /// `INVALID_INPUT`; a missing id is `Ok(false)`, because asking to remove
+    /// something that is already gone is not an error.
+    pub fn remove_job(&mut self, id: &str) -> Result<bool, JobError> {
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|error| sql_error(error, "abrir la transacción de borrado"))?;
+        let Some(job) = read_job(&tx, id)? else {
+            return Ok(false);
+        };
+        if REMOVABLE_REFUSED.contains(&job.state.as_str()) {
+            return Err(JobError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "El trabajo `{id}` está activo (`{}`): cancelalo antes de eliminarlo.",
+                    job.state.as_str()
+                ),
+                false,
+            ));
+        }
+
+        for statement in [DELETE_JOB_EVENTS, DELETE_RESERVATION, DELETE_JOB] {
+            tx.execute(statement, params![id])
+                .map_err(|error| sql_error(error, "borrar el trabajo"))?;
+        }
+        tx.commit()
+            .map_err(|error| sql_error(error, "confirmar el borrado"))?;
+        Ok(true)
     }
 }
 
