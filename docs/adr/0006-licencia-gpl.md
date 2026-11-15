@@ -1,6 +1,6 @@
 # ADR 0006 — Licencia GPL-3.0-or-later
 
-- **Estado:** Aceptado (ratificado el 2026-11-14; `LICENSE`/`NOTICE` pendientes en C-001)
+- **Estado:** Aceptado (ratificado el 2026-11-14; `LICENSE` y `NOTICE` publicados)
 - **Fecha:** 2026-11-14
 - **Decisores:** Wilkin Barban
 - **Ámbito:** licencia del código y distribución
@@ -25,7 +25,7 @@ Publicar Cauce bajo **GPL-3.0-or-later** y conservar la atribución del código 
 - Existe un archivo `LICENSE` con el texto GPL-3.0.
 - `NOTICE` enumera cualquier código MIT reutilizado.
 - La release declara la licencia y las obligaciones de terceros.
-- La decisión está ratificada; falta materializarla en `LICENSE` y `NOTICE`.
+- La decisión está materializada en `LICENSE` y `NOTICE`.
 
 ## Alternativa
 

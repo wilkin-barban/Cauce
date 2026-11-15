@@ -45,7 +45,7 @@
 | Carpetas vigiladas | Chokidar, reglas, post-acción | **Planificado** | **MVP** | **MVP** | Detecta archivo estabilizado, no reprocesa y aplica keep/delete/move |
 | Historial | Lista y detalle | **Planificado** | **MVP** | **MVP** | Persistente, filtrable y con transiciones auditables |
 | Logs | Niveles, filtros, búsqueda, persistencia | **Parcial**: básico | **MVP** | **MVP** | Rotación, filtros y exportación sin rutas sensibles |
-| Notificaciones | Completado/fallido | **MVP**: opcional | **MVP** | **MVP** | Solo si el ajuste está activo y el escritorio lo soporta |
+| Notificaciones | Completado/fallido | **MVP**: opcional | **MVP** | **MVP** | Desactivadas por defecto; el daemon emite una sola notificación terminal con el nombre base |
 | Tema | Claro/oscuro/sistema | **MVP** | **MVP** | **MVP** | Sigue el tema del sistema y permite override |
 | Idiomas | ES/EN | **MVP**: ES/EN | **MVP** | **MVP**: ES/EN/PT-BR | Cambio en vivo sin reiniciar |
 | Actualizaciones | Auto-update Electron | **Fuera del MVP** | **Posterior** | **Posterior** | En `.deb`, abrir la página oficial de releases; no auto-update silencioso |

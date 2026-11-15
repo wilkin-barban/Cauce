@@ -2,6 +2,7 @@
 
 **Estado:** normativo para v0.1  
 **Origen:** catálogo de FF-Converter `v1.1.1`, adaptado a Cauce y a CPU en el MVP.  
+**Nombres ES/EN:** ratificados para v0.1; PT-BR en v0.2.  
 **Relacionado:** [`contracts.md`](contracts.md), [`parity.md`](parity.md)
 
 ## Reglas del catálogo

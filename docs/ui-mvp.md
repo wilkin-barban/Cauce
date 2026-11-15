@@ -165,10 +165,13 @@ Los errores se muestran dentro de la página afectada, no sólo como toast; los 
 
 ## 11. Notificaciones
 
-- Completado: nombre del archivo y acción “Abrir carpeta”.
-- Fallido: nombre y acción “Ver diagnóstico”.
-- Solo si el ajuste `notifications` está activo.
-- Si el escritorio no soporta notificaciones, no se considera un error de la conversión.
+- Desactivadas por defecto.
+- Si el usuario las activa, las emite el **daemon**, una sola vez por trabajo terminal.
+- Completado: “Conversión completada: `<nombre>`”.
+- Fallido: “Conversión fallida: `<nombre>`”.
+- Se usa solo el nombre base, nunca la ruta completa.
+- La GUI no emite una segunda notificación; sus toasts son locales.
+- Si el escritorio no soporta notificaciones, se registra un warning y la conversión no falla.
 
 ## 12. Reconexión
 

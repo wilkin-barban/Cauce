@@ -29,6 +29,7 @@ La primera entrega será un **MVP enfocado en convertir, encolar y aplicar prese
 | Presets MVP | Los 13 del sistema | Paridad inicial; personalizados en v0.2 |
 | Flujo de GUI | Añadir a cola y luego iniciar | Revisión segura antes de ejecutar |
 | CLI v0.1 | Solo interna | Diagnóstico y pruebas sin contrato público |
+| Notificaciones | Desactivadas por defecto; el daemon notifica completado/fallido | Evita ruido, duplicados y filtración de rutas |
 | Licencia | GPL-3.0-or-later (ratificada) | Coherente con Segmenta y con un ecosistema abierto |
 
 ## 3. Alcance del MVP v0.1
@@ -313,6 +314,8 @@ La GUI usa el portal para archivos y carpetas, acepta drag & drop y muestra un e
 - No se registran cabeceras, tokens, credenciales ni rutas completas sin redacción.
 - La UI puede filtrar por nivel y origen; exportar logs queda para una fase posterior.
 - Cada transición de trabajo es auditable en SQLite.
+- Las notificaciones de escritorio están desactivadas por defecto. Si el usuario las activa, las emite el daemon al completar o fallar, usando solo el nombre base del archivo; la GUI no crea una segunda notificación.
+- Un fallo de notificación se registra como warning y nunca cambia el estado del trabajo.
 
 ## 15. Seguridad
 
@@ -403,11 +406,14 @@ El paquete se construye con `cargo-deb` y pasa una puerta de empaquetado que val
 - [ ] La GUI funciona bajo Xvfb y el paquete pasa clean-install.
 - [ ] La documentación de paridad está publicada y enlazada desde este documento.
 
-## 20. Decisiones abiertas
+## 20. Decisiones resueltas y readiness
 
-1. Crear `LICENSE` y `NOTICE` con la licencia ratificada.
-2. Definir la política exacta de notificaciones del escritorio.
-3. Ratificar los nombres localizados del catálogo de 13 presets antes de traducir PT-BR.
+- Licencia **GPL-3.0-or-later** ratificada; `LICENSE` y `NOTICE` publicados.
+- Notificaciones desactivadas por defecto; el daemon notifica solo estados terminales y usa el nombre base del archivo.
+- Nombres ES/EN de los 13 presets ratificados en [`presets.md`](presets.md); PT-BR llega en v0.2.
+- No quedan decisiones de arquitectura bloqueantes para iniciar `C-010`.
+
+La implementación debe empezar por el workspace y los contratos, no por la GUI.
 
 ## 21. ADRs y backlog
 

@@ -58,11 +58,18 @@ C-061 GUI smoke
 C-062 Release MVP
 ```
 
+## Estado de entrada a implementación
+
+- `C-001` **completado**: licencia ratificada, `LICENSE` y `NOTICE` publicados.
+- Política de notificaciones **decidida**: desactivadas por defecto; el daemon notifica estados terminales.
+- Nombres ES/EN de los 13 presets **ratificados**; PT-BR en v0.2.
+- `C-010` es el primer item desbloqueado. No se ha creado código todavía.
+
 ## Backlog del MVP
 
 | ID | Fase | Prio | Entrega | Depende de | Aceptación |
 |---|---|---|---|---|---|
-| `C-001` | 0 | P0 | Crear `LICENSE`/`NOTICE` con GPL-3.0-or-later ratificada | ADR 0006 | Licencia materializada, con atribución de código MIT si se reutiliza |
+| `C-001` | 0 | P0 | **Completado:** `LICENSE`/`NOTICE` con GPL-3.0-or-later | ADR 0006 | Licencia materializada, con atribución de código MIT si se reutiliza |
 | `C-010` | 1 | P1 | Workspace Rust y crates vacíos con fronteras del ADR | C-001 | `cargo metadata` lista los crates y no hay dependencias invertidas |
 | `C-011` | 1 | P1 | Tipos de dominio según `contracts.md` | C-010 | Serialización estable y tests de contrato |
 | `C-012` | 1 | P1 | Parser FFprobe JSON | C-011 | Fixtures de video/audio/subtítulos y errores cubiertos |

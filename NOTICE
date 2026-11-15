@@ -1,0 +1,21 @@
+Cauce
+Copyright (C) 2026 Wilkin Barban
+
+Cauce is licensed under the GNU General Public License, version 3 or later
+(GPL-3.0-or-later). The full license text is in LICENSE.
+
+Third-party notices
+-------------------
+
+- FF-Converter (https://github.com/wilkin-barban/FF-Converter), Copyright its
+  contributors, is distributed under the MIT License. It is used as a product
+  and architecture reference. No FF-Converter source code is incorporated into
+  Cauce at this stage; if code is reused later, its MIT notice and attribution
+  must be added here.
+
+- FFmpeg and FFprobe are runtime dependencies provided by the Ubuntu system and
+  are not redistributed inside the Cauce package. Their licenses and notices
+  apply to the installed system package.
+
+- GTK, Libadwaita and other system libraries are provided by Ubuntu and remain
+  under their respective licenses.
