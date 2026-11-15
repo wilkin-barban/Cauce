@@ -1,0 +1,18 @@
+# Cauce user socket (`docs/architecture.md` §16, `docs/contracts.md` §5).
+#
+# The daemon owns the queue and the child processes
+# (`docs/architecture.md` §2), so closing the GUI never stops a conversion:
+# the socket stays up and systemd starts the daemon on the first connection.
+
+[Unit]
+Description=Cauce conversion daemon socket
+Documentation=info:io.github.wilkin.Cauce
+
+[Socket]
+ListenStream=%t/cauce/daemon.sock
+SocketMode=0600
+DirectoryMode=0700
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

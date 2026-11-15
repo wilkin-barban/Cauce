@@ -1,0 +1,21 @@
+# Cauce user service (`docs/architecture.md` §16).
+#
+# The daemon owns the queue, the scheduler and the FFmpeg children
+# (`docs/architecture.md` §2), so closing the GUI never stops a conversion.
+# It runs as a user unit: no root, no `User=` override, socket activated by
+# `cauce.socket`.
+
+[Unit]
+Description=Cauce conversion daemon
+Requires=cauce.socket
+After=cauce.socket
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/cauce-daemon
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
