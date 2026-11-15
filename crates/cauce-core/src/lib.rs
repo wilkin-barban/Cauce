@@ -8,6 +8,7 @@ pub mod compat;
 pub mod error;
 pub mod job;
 pub mod media;
+pub mod output;
 pub mod plan;
 pub mod preset;
 pub mod probe;
@@ -22,6 +23,7 @@ pub use compat::plan_conversion;
 pub use error::{ErrorCode, JobError};
 pub use job::{Job, JobState, Progress};
 pub use media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
+pub use output::{resolve_output_path, temp_path, validate_output};
 pub use plan::{
     AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
