@@ -17,7 +17,7 @@ use cauce_core::ErrorCode;
 use libadwaita as adw;
 use serde_json::json;
 
-use crate::client::Client;
+use crate::client::{self, Client};
 use crate::pages;
 
 /// Application id, shared with the future desktop file (`C-050`).
@@ -91,16 +91,28 @@ fn build(application: &adw::Application) -> adw::ApplicationWindow {
     toolbar.set_content(Some(&split));
     window.set_content(Some(&toolbar));
 
-    // `daemon.status` notifications keep the footer truthful between probes
-    // (`docs/contracts.md` §7).
+    // `daemon.status` notifications keep the footer truthful between probes, and
+    // the client-side `daemon.disconnected` event means the socket closed, so the
+    // banner appears immediately instead of waiting for the next probe
+    // (`docs/contracts.md` §7, review findings R3-002 and R4-003).
     let events = client.events();
     let banner_for_events = banner.clone();
     let state_for_events = daemon_state.clone();
     glib::spawn_future_local(async move {
         while let Ok(event) = events.recv().await {
-            if event.get("method").and_then(serde_json::Value::as_str) == Some("daemon.status") {
-                banner_for_events.set_revealed(false);
-                state_for_events.set_label("Daemon: conectado");
+            match event.get("method").and_then(serde_json::Value::as_str) {
+                Some(client::DISCONNECTED_EVENT) => {
+                    banner_for_events.set_title(OFFLINE_BANNER);
+                    banner_for_events.set_revealed(true);
+                    state_for_events.set_label(OFFLINE_DAEMON_STATE);
+                }
+                // Any event from a live daemon proves the connection works, so the
+                // banner hides again as soon as the daemon answers.
+                Some(_) => {
+                    banner_for_events.set_revealed(false);
+                    state_for_events.set_label("Daemon: conectado");
+                }
+                None => {}
             }
         }
     });
