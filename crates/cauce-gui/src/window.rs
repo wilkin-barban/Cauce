@@ -118,8 +118,9 @@ impl Chrome {
             self.list
                 .append(&sidebar_row(i18n::t(section.title_key), section.icon));
         }
+        // The sidebar header carries the title only: the subtitle would
+        // ellipsize inside the 200-320px column.
         self.title.set_title(i18n::t("app.title"));
-        self.title.set_subtitle(i18n::t("app.subtitle"));
         self.paint();
         // Re-selecting the same index restores the section the user was reading.
         let last = i32::try_from(pages::SECTIONS.len()).unwrap_or(1) - 1;
@@ -129,7 +130,8 @@ impl Chrome {
     }
 }
 
-fn build(application: &adw::Application) -> adw::ApplicationWindow {
+/// Builds the shell. Public so the chrome contract can be checked with a display.
+pub fn build(application: &adw::Application) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title(i18n::t("app.title"))
@@ -148,20 +150,27 @@ fn build(application: &adw::Application) -> adw::ApplicationWindow {
     daemon_state.add_css_class("caption");
     daemon_state.add_css_class("dim-label");
 
+    let title = adw::WindowTitle::new(i18n::t("app.title"), "");
     let list = gtk::ListBox::new();
     let split = adw::NavigationSplitView::new();
     split.set_min_sidebar_width(200.0);
     split.set_max_sidebar_width(320.0);
-    split.set_sidebar(Some(&sidebar(&content, &split, &list, &daemon_state)));
+    split.set_sidebar(Some(&sidebar(
+        &content,
+        &split,
+        &list,
+        &daemon_state,
+        &title,
+    )));
     if let Some(first) = content.borrow().first() {
         split.set_content(Some(first));
     }
 
-    let title = adw::WindowTitle::new(i18n::t("app.title"), i18n::t("app.subtitle"));
+    // The window draws no header bar of its own: every page owns one and
+    // Libadwaita hides the window controls everywhere but at the window edges.
+    // A window-level `AdwHeaderBar` here would draw a second set of them, which
+    // is exactly the duplicate title bar of the first screenshot.
     let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&title));
-    toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
     toolbar.set_content(Some(&split));
     window.set_content(Some(&toolbar));
@@ -176,6 +185,7 @@ fn build(application: &adw::Application) -> adw::ApplicationWindow {
     };
 
     wire_events(&chrome, &client);
+    wire_connection(&chrome, &client);
     wire_retry(&chrome, &client);
     wire_smoke(&window);
     wire_locale(&chrome, &client);
@@ -202,6 +212,24 @@ fn wire_events(chrome: &Chrome, client: &Rc<Client>) {
                 }
                 None => {}
             }
+        }
+    });
+}
+
+/// A successful reply is the strongest proof that IPC works: this watches the
+/// client's own state so the footer and the banner follow the request/response
+/// path and never wait for a `daemon.status` event.
+fn wire_connection(chrome: &Chrome, client: &Rc<Client>) {
+    let states = client.connection();
+    let chrome = Rc::new(chrome.clone());
+    glib::spawn_future_local(async move {
+        while let Ok(connected) = states.recv().await {
+            chrome.link.set(if connected {
+                Link::Online
+            } else {
+                Link::Offline
+            });
+            chrome.paint();
         }
     });
 }
@@ -235,16 +263,15 @@ fn sidebar(
     split: &adw::NavigationSplitView,
     list: &gtk::ListBox,
     daemon_state: &gtk::Label,
+    title: &adw::WindowTitle,
 ) -> adw::NavigationPage {
-    let identity = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    identity.set_margin_top(12);
-    identity.set_margin_bottom(6);
-    identity.set_margin_start(12);
-    identity.set_margin_end(12);
-    let icon = gtk::Image::from_icon_name(app_icon());
-    icon.set_pixel_size(32);
-    identity.append(&icon);
-    identity.append(&gtk::Label::new(Some(i18n::t("app.title"))));
+    // The sidebar keeps the application title, never the window controls: the
+    // editable buttons belong to the page at the window edge (`AdwNavigationSplitView`
+    // hides them elsewhere), so the sidebar hides both sides explicitly.
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(title));
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
 
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.set_activate_on_single_click(true);
@@ -261,9 +288,12 @@ fn sidebar(
     footer.append(daemon_state);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    body.append(&identity);
     body.append(list);
     body.append(&footer);
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&body));
 
     let pages = Rc::clone(content);
     let split = split.clone();
@@ -283,7 +313,7 @@ fn sidebar(
         list.select_row(Some(&first));
     }
 
-    adw::NavigationPage::new(&body, i18n::t("app.title"))
+    adw::NavigationPage::new(&toolbar, i18n::t("app.title"))
 }
 
 /// One sidebar entry: a symbolic icon plus its label, so no control is icon-only.

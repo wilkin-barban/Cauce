@@ -62,6 +62,58 @@ type Reply = async_channel::Sender<Result<Value, JobError>>;
 /// One listener of the daemon's notification stream.
 type Subscriber = async_channel::Sender<Value>;
 
+/// One listener of the client's connection state.
+type StateSender = async_channel::Sender<bool>;
+
+/// What a successful reply and a lost socket change.
+///
+/// The state is an atomic flag plus a broadcast of `true`/`false` to the shell,
+/// so the footer follows the real request/response path without polling and
+/// without adding frames to the daemon's notification stream.
+struct Link {
+    connected: AtomicBool,
+    states: Mutex<Vec<StateSender>>,
+}
+
+impl Link {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            connected: AtomicBool::new(false),
+            states: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
+
+    /// A reply proved the daemon answers: flag it and tell the listeners once.
+    fn mark_connected(&self) {
+        if !self.connected.swap(true, Ordering::SeqCst) {
+            self.publish(true);
+        }
+    }
+
+    /// The link is gone: never announce it twice for the same connection.
+    fn mark_disconnected(&self) {
+        if self.connected.swap(false, Ordering::SeqCst) {
+            self.publish(false);
+        }
+    }
+
+    fn publish(&self, connected: bool) {
+        let mut list = self
+            .states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        list.retain(|sender| !sender.is_closed());
+        for sender in list.iter() {
+            // Bounded to one slot: the newest state always wins.
+            let _ = sender.force_send(connected);
+        }
+    }
+}
+
 /// A pending request: a line to write plus where its answer must land.
 struct Request {
     method: String,
@@ -83,16 +135,19 @@ struct Pending {
     slots: Mutex<HashMap<u64, Reply>>,
     /// Set to false when the reader sees the connection end or time out.
     alive: AtomicBool,
+    /// Shared with the client: whether the daemon answers and who listens.
+    link: Arc<Link>,
 }
 
 impl Pending {
-    fn new(kill: async_channel::Sender<u64>, generation: u64) -> Self {
+    fn new(kill: async_channel::Sender<u64>, generation: u64, link: Arc<Link>) -> Self {
         Self {
             slots: Mutex::new(HashMap::new()),
             alive: AtomicBool::new(true),
             reader: Mutex::new(None),
             kill,
             generation,
+            link,
         }
     }
 
@@ -151,6 +206,7 @@ impl Pending {
     /// Fails every waiting request with the same error and closes the socket.
     fn fail_all(&self, error: &JobError) {
         self.alive.store(false, Ordering::SeqCst);
+        self.link.mark_disconnected();
         let waiting: Vec<Reply> = self.lock().drain().map(|(_, reply)| reply).collect();
         for reply in waiting {
             let _ = reply.try_send(Err(error.clone()));
@@ -185,6 +241,7 @@ impl Connection {
         kill: async_channel::Sender<u64>,
         generation: u64,
         deadline: tokio::time::Instant,
+        link: Arc<Link>,
     ) -> Result<Self, JobError> {
         let stream = match tokio::time::timeout_at(deadline, UnixStream::connect(&socket)).await {
             Ok(Ok(stream)) => stream,
@@ -198,7 +255,7 @@ impl Connection {
             Err(_) => return Err(stalled_open()),
         };
         let (read, writer) = stream.into_split();
-        let pending = Arc::new(Pending::new(kill, generation));
+        let pending = Arc::new(Pending::new(kill, generation, link));
         let reader = Arc::clone(&pending);
         let task = tokio::spawn(async move { read_loop(read, reader, subscribers).await });
         pending.set_reader(task.abort_handle());
@@ -293,21 +350,27 @@ async fn read_loop(
                 let Some(reply) = pending.take(id) else {
                     continue;
                 };
-                let _ = reply.try_send(parse_response(&message));
+                let response = parse_response(&message);
+                if response.is_ok() {
+                    // A real answer is the strongest proof that IPC works: the
+                    // footer follows this instead of waiting for `daemon.status`.
+                    pending.link.mark_connected();
+                }
+                let _ = reply.try_send(response);
             }
             Ok(None) => break daemon_unavailable(t("client.lost")),
             Err(LineError::TooLong) => break daemon_unavailable(t("client.oversized_line")),
             Err(LineError::Io) => break daemon_unavailable(t("client.lost")),
         }
     };
+    // The state flips before the event is broadcast, so a listener that reacts
+    // to the notification already sees `Client::is_connected() == false`.
+    pending.link.mark_disconnected();
     // Client-side only: this event is never written to the daemon and does not
     // change the wire protocol of `docs/contracts.md` §5/§7. It is emitted once
     // per connection, before the pending replies fail, so the banner appears as
     // soon as the daemon crashes (review findings R3-002 and R4-003).
-    broadcast(
-        &subscribers,
-        json!({"jsonrpc": "2.0", "method": DISCONNECTED_EVENT, "params": {}}),
-    );
+    broadcast(&subscribers, notification(DISCONNECTED_EVENT));
     // The write half must go away with the reader: a half-open socket would let a
     // peer keep writing into a buffer nobody drains.
     pending.signal_closed();
@@ -389,6 +452,11 @@ impl Lines {
     }
 }
 
+/// The client's own notifications: they never reach the daemon (`§5`/`§7`).
+fn notification(method: &str) -> Value {
+    json!({"jsonrpc": "2.0", "method": method, "params": {}})
+}
+
 fn broadcast(subscribers: &Mutex<Vec<Subscriber>>, message: Value) {
     let mut list = subscribers
         .lock()
@@ -465,6 +533,9 @@ fn unavailable_with_io(error: &std::io::Error) -> JobError {
 pub struct Client {
     requests: async_channel::Sender<Request>,
     subscribers: Arc<Mutex<Vec<Subscriber>>>,
+    /// Whether the daemon answered the last exchange; read by the shell so the
+    /// footer never claims "sin conexión" while the catalog arrives.
+    link: Arc<Link>,
     // Kept alive for the whole life of the client: dropping it aborts the
     // supervisor and therefore every connection attempt.
     _runtime: Option<tokio::runtime::Runtime>,
@@ -476,6 +547,7 @@ impl Client {
     pub fn connect() -> Self {
         let (requests, queue) = async_channel::unbounded::<Request>();
         let subscribers = Arc::new(Mutex::new(Vec::new()));
+        let link = Link::new();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -483,10 +555,15 @@ impl Client {
             .build();
         match runtime {
             Ok(runtime) => {
-                runtime.spawn(supervise(queue, Arc::clone(&subscribers)));
+                runtime.spawn(supervise(
+                    queue,
+                    Arc::clone(&subscribers),
+                    Arc::clone(&link),
+                ));
                 Self {
                     requests,
                     subscribers,
+                    link,
                     _runtime: Some(runtime),
                 }
             }
@@ -497,6 +574,7 @@ impl Client {
                 Self {
                     requests,
                     subscribers,
+                    link,
                     _runtime: None,
                 }
             }
@@ -516,12 +594,58 @@ impl Client {
             reply,
         };
         if self.requests.send(request).await.is_err() {
+            self.mark_disconnected();
             return Err(daemon_unavailable(t("client.worker_unavailable")));
         }
         match answer.recv().await {
-            Ok(result) => result,
-            Err(_) => Err(daemon_unavailable(t("client.closed_without_answer"))),
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) => {
+                // `DAEMON_UNAVAILABLE` means the socket conversation failed, so
+                // the footer must stop saying "sin conexión" only when it is back.
+                if error.code == ErrorCode::DaemonUnavailable {
+                    self.mark_disconnected();
+                }
+                Err(error)
+            }
+            Err(_) => {
+                self.mark_disconnected();
+                Err(daemon_unavailable(t("client.closed_without_answer")))
+            }
         }
+    }
+
+    /// Whether the daemon answered the last exchange.
+    ///
+    /// A successful reply sets it, a lost connection or `DAEMON_UNAVAILABLE`
+    /// clears it; the shell paints the footer from this value, so it never polls.
+    pub fn is_connected(&self) -> bool {
+        self.link.is_connected()
+    }
+
+    /// The connection state as it changes.
+    ///
+    /// A listener that arrives while the daemon is already answering starts with
+    /// `true`, so a reply that happened first is never missed. Nothing is queued
+    /// while offline: the shell's own initial state is already "sin conexión", and
+    /// queueing it would flash the banner for a live daemon.
+    pub fn connection(&self) -> async_channel::Receiver<bool> {
+        let (sender, receiver) = async_channel::bounded(1);
+        if self.link.is_connected() {
+            let _ = sender.try_send(true);
+        }
+        let mut list = self
+            .link
+            .states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        list.retain(|sender| !sender.is_closed());
+        list.push(sender);
+        receiver
+    }
+
+    /// Offline on the client side, announced to the shell only on the transition.
+    fn mark_disconnected(&self) {
+        self.link.mark_disconnected();
     }
 
     /// A receiver for the daemon's notifications (`job.updated`, `job.progress`,
@@ -547,6 +671,7 @@ impl Client {
 async fn supervise(
     requests: async_channel::Receiver<Request>,
     subscribers: Arc<Mutex<Vec<Subscriber>>>,
+    link: Arc<Link>,
 ) {
     let mut connection: Option<Connection> = None;
     let mut next_id = 0_u64;
@@ -591,6 +716,7 @@ async fn supervise(
                 kill_tx.clone(),
                 generation,
                 deadline,
+                Arc::clone(&link),
             )
             .await
             {
