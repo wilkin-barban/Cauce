@@ -16,6 +16,22 @@ use crate::plan::{
 /// Filters the MVP depends on; the capability gate (T9) checks the same names.
 pub const REQUIRED_FILTERS: [&str; 5] = ["zscale", "tonemap", "scale", "format", "fps"];
 
+/// CPU encoders the thirteen presets select (`docs/presets.md`, "Resolución en
+/// v0.1"): the union of the video and audio allowlists below, so the capability
+/// gate checks exactly what the builder is able to emit.
+pub const REQUIRED_ENCODERS: [&str; 10] = [
+    "libx264",
+    "libx265",
+    "libsvtav1",
+    "libvpx-vp9",
+    "aac",
+    "libmp3lame",
+    "flac",
+    "alac",
+    "pcm_s16le",
+    "libopus",
+];
+
 /// CPU video encoders allowed in v0.1. `copy` is not a re-encode.
 const VIDEO_ENCODERS: [&str; 4] = ["libx264", "libx265", "libsvtav1", "libvpx-vp9"];
 /// CPU audio encoders allowed in v0.1.

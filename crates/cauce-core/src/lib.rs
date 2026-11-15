@@ -2,6 +2,7 @@
 //!
 //! This crate knows nothing about GTK, sockets, SQLite or child processes.
 
+pub mod capabilities;
 pub mod catalog;
 pub mod command;
 pub mod compat;
@@ -17,6 +18,7 @@ pub mod time;
 
 mod validate;
 
+pub use capabilities::Capabilities;
 pub use catalog::system_presets;
 pub use command::build_ffmpeg_args;
 pub use compat::plan_conversion;
