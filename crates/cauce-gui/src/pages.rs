@@ -1,14 +1,20 @@
 //! The five sections of the MVP shell: Convertir, Cola, Presets, Diagnóstico and
 //! Ajustes (`docs/ui-mvp.md` §2 and `docs/architecture.md` §13).
 //!
-//! T15 ships the frame only. Every page is an `AdwNavigationPage` holding an
-//! `AdwToolbarView` with its own header and a short `AdwStatusPage` that says
-//! what the section will do, so T16-T18 can replace the body without touching the
-//! window. Icons are symbolic names the Adwaita theme already ships: nothing here
-//! borrows an asset from another project.
+//! Convertir is a real page since T16 and lives in [`convert`]. The other four are
+//! still an `AdwNavigationPage` holding an `AdwToolbarView` with a short
+//! `AdwStatusPage` that says what the section will do, so T17-T18 can replace the
+//! body without touching the window. Icons are symbolic names the Adwaita theme
+//! already ships: nothing here borrows an asset from another project.
+
+use std::rc::Rc;
 
 use adw::prelude::*;
 use libadwaita as adw;
+
+use crate::client::Client;
+
+pub mod convert;
 
 /// One entry of the sidebar and its placeholder page.
 pub struct Section {
@@ -68,8 +74,8 @@ pub const SECTIONS: [Section; 5] = [
     },
 ];
 
-/// Builds the placeholder page for one section.
-pub fn page(section: &Section) -> adw::NavigationPage {
+/// Builds the placeholder page for one section that T17-T18 will fill in.
+pub fn placeholder(section: &Section) -> adw::NavigationPage {
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(section.title, "")));
 
@@ -89,7 +95,13 @@ pub fn page(section: &Section) -> adw::NavigationPage {
     page
 }
 
-/// Builds the page builders for every section, in sidebar order.
-pub fn all() -> Vec<adw::NavigationPage> {
-    SECTIONS.iter().map(page).collect()
+/// Builds every section, in sidebar order: Convertir first, then the placeholders.
+pub fn all(client: &Rc<Client>) -> Vec<adw::NavigationPage> {
+    let mut pages = Vec::with_capacity(SECTIONS.len());
+    for section in SECTIONS.iter() {
+        pages.push(placeholder(section));
+    }
+    let _ = client;
+    pages
 }
+
