@@ -83,6 +83,8 @@ pub const ENTRIES: &[(&str, &str)] = &[
         "convert.drop_hint",
         "Drag videos, audio files or a folder here",
     ),
+    ("convert.drop_subtitle", "or use the buttons below"),
+    ("convert.drop_title", "Drag videos, audio files or a folder"),
     ("convert.folder_dialog", "Choose the output folder"),
     ("convert.inspecting", "Inspecting with FFprobe…"),
     ("convert.loading_presets", "Loading presets…"),
@@ -156,6 +158,82 @@ pub const ENTRIES: &[(&str, &str)] = &[
         "diagnostics.unreadable",
         "The diagnostics arrived unreadable: {error}",
     ),
+    (
+        "error.cancelled",
+        "The job was cancelled. Queue the file again if you still want it.",
+    ),
+    (
+        "error.daemon_unavailable",
+        "Cauce cannot reach its background service. Check that it is running and try again.",
+    ),
+    (
+        "error.database_busy",
+        "The queue is busy writing. Wait a few seconds and try again.",
+    ),
+    (
+        "error.ffmpeg_feature_missing",
+        "This machine is missing an FFmpeg component the preset needs. Pick another preset or install the full FFmpeg build.",
+    ),
+    (
+        "error.ffmpeg_missing",
+        "FFmpeg was not found on this machine. Install it with `sudo apt install ffmpeg` and try again.",
+    ),
+    (
+        "error.generic",
+        "We could not complete the operation. Retry or open Diagnostics to see what happened.",
+    ),
+    (
+        "error.internal",
+        "Something failed inside Cauce and the job could not finish. Retry or open Diagnostics for more detail.",
+    ),
+    (
+        "error.invalid_input",
+        "The file or the path is not valid. Check the path and try again.",
+    ),
+    (
+        "error.output_collision",
+        "A file with that name already exists in the destination folder. Choose another duplicate policy or another output folder.",
+    ),
+    (
+        "error.output_validation_failed",
+        "The converted file does not match what the preset promises. Try again or pick another preset.",
+    ),
+    (
+        "error.path_denied",
+        "That path is outside the folders Cauce may use. Pick a file or a folder inside your documents.",
+    ),
+    (
+        "error.plan_invalid",
+        "The preset and the file are not compatible. Pick another preset.",
+    ),
+    (
+        "error.probe_failed",
+        "We could not read this file. Check that it is not damaged and try another one.",
+    ),
+    (
+        "error.process_failed",
+        "FFmpeg stopped the conversion with an error. You can retry the job.",
+    ),
+    ("error.technical_details", "Technical details"),
+    ("presets.custom_audio_none", "No audio"),
+    ("presets.custom_copy", "Copy the original"),
+    ("presets.custom_delete", "Delete"),
+    ("presets.custom_deleted", "Custom preset deleted."),
+    (
+        "presets.custom_hint",
+        "One preset of your own: saving replaces the previous one.",
+    ),
+    ("presets.custom_invalid", "That combination is not valid."),
+    ("presets.custom_kbps", "{n} kbps"),
+    ("presets.custom_quality_high", "High"),
+    ("presets.custom_quality_low", "Low"),
+    ("presets.custom_quality_medium", "Medium"),
+    ("presets.custom_resolution_original", "Original"),
+    ("presets.custom_save", "Save"),
+    ("presets.custom_saved", "Custom preset saved."),
+    ("presets.custom_subtitles_keep", "Keep"),
+    ("presets.custom_subtitles_remove", "Remove"),
+    ("presets.custom_video_none", "No video"),
     ("presets.detail_audio_bitrate", "Audio bitrate"),
     ("presets.detail_audio_codec", "Audio codec"),
     ("presets.detail_bit_depth", "Bit depth"),
@@ -173,6 +251,7 @@ pub const ENTRIES: &[(&str, &str)] = &[
     ("presets.error_title", "Could not read the catalog"),
     ("presets.group_archive", "Archive and optimisation"),
     ("presets.group_audio", "Audio and music"),
+    ("presets.group_custom", "Custom"),
     ("presets.group_social", "Web and social"),
     ("presets.group_tv", "Smart TV"),
     (
@@ -185,7 +264,7 @@ pub const ENTRIES: &[(&str, &str)] = &[
         "The system catalog cannot be edited or deleted in v0.1.",
     ),
     ("presets.retry", "Retry"),
-    ("presets.subtitle", "Read only in v0.1"),
+    ("presets.subtitle", "13 system presets and one custom"),
     (
         "presets.unreadable",
         "The catalog arrived unreadable: {error}",

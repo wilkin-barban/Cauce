@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
-use cauce_core::{HdrPolicy, Preset, SubtitlePolicy};
+use cauce_core::{ErrorCode, HdrPolicy, Preset, SubtitlePolicy};
 use cauce_i18n::Locale;
 
 /// Spanish is the default until the daemon says otherwise.
@@ -77,6 +77,95 @@ fn notify() {
     let listener = LISTENER.with(|slot| slot.borrow().clone());
     if let Some(listener) = listener {
         listener();
+    }
+}
+
+/// Catalog key of the generic sentence, used when a code has no message of its
+/// own (`docs/contracts.md` §8).
+const ERROR_GENERIC_KEY: &str = "error.generic";
+
+/// The key of the generic sentence, for the parity and fallback contracts.
+pub const ERROR_GENERIC: &str = ERROR_GENERIC_KEY;
+
+/// Catalog key of the one-sentence, human explanation of `code`.
+pub fn error_key(code: ErrorCode) -> &'static str {
+    match code {
+        ErrorCode::InvalidInput => "error.invalid_input",
+        ErrorCode::PathDenied => "error.path_denied",
+        ErrorCode::FfmpegMissing => "error.ffmpeg_missing",
+        ErrorCode::FfmpegFeatureMissing => "error.ffmpeg_feature_missing",
+        ErrorCode::ProbeFailed => "error.probe_failed",
+        ErrorCode::PlanInvalid => "error.plan_invalid",
+        ErrorCode::OutputCollision => "error.output_collision",
+        ErrorCode::OutputValidationFailed => "error.output_validation_failed",
+        ErrorCode::ProcessFailed => "error.process_failed",
+        ErrorCode::Cancelled => "error.cancelled",
+        ErrorCode::DaemonUnavailable => "error.daemon_unavailable",
+        ErrorCode::DatabaseBusy => "error.database_busy",
+        ErrorCode::Internal => "error.internal",
+    }
+}
+
+/// The stable wire name of `code`. It is never the visible sentence: it belongs
+/// to the collapsed technical disclosure and to the logs.
+pub fn error_code(code: ErrorCode) -> &'static str {
+    match code {
+        ErrorCode::InvalidInput => "INVALID_INPUT",
+        ErrorCode::PathDenied => "PATH_DENIED",
+        ErrorCode::FfmpegMissing => "FFMPEG_MISSING",
+        ErrorCode::FfmpegFeatureMissing => "FFMPEG_FEATURE_MISSING",
+        ErrorCode::ProbeFailed => "PROBE_FAILED",
+        ErrorCode::PlanInvalid => "PLAN_INVALID",
+        ErrorCode::OutputCollision => "OUTPUT_COLLISION",
+        ErrorCode::OutputValidationFailed => "OUTPUT_VALIDATION_FAILED",
+        ErrorCode::ProcessFailed => "PROCESS_FAILED",
+        ErrorCode::Cancelled => "CANCELLED",
+        ErrorCode::DaemonUnavailable => "DAEMON_UNAVAILABLE",
+        ErrorCode::DatabaseBusy => "DATABASE_BUSY",
+        ErrorCode::Internal => "INTERNAL",
+    }
+}
+
+/// The human sentence of `code` in the current locale: what happened and what the
+/// user can do about it (`docs/ui-mvp.md` §9). The raw code and `technical` never
+/// become this text; they go to [`technical_details`].
+pub fn human_error(code: ErrorCode, technical: &str) -> String {
+    human_error_in(locale(), code, technical)
+}
+
+/// [`human_error`] in an explicit locale, so the three catalogs can be checked
+/// without mutating the process-wide value.
+pub fn human_error_in(locale: Locale, code: ErrorCode, technical: &str) -> String {
+    human_error_from_key_in(locale, error_key(code), technical)
+}
+
+/// [`human_error`] for a catalog key that may not exist yet: the seam the
+/// unknown-code fallback is proven through.
+pub fn human_error_from_key(key: &'static str, technical: &str) -> String {
+    human_error_from_key_in(locale(), key, technical)
+}
+
+fn human_error_from_key_in(locale: Locale, key: &'static str, technical: &str) -> String {
+    let sentence = cauce_i18n::translate(locale, key);
+    // A miss returns the key itself (`cauce-i18n` contract), so a key that comes
+    // back unchanged means this code has no message yet.
+    if sentence != key && !sentence.trim().is_empty() {
+        return sentence.to_owned();
+    }
+    let generic = cauce_i18n::translate(locale, ERROR_GENERIC_KEY);
+    if generic != ERROR_GENERIC_KEY && !generic.trim().is_empty() {
+        return generic.to_owned();
+    }
+    // Last resort: the daemon's own words, which the disclosure shows anyway.
+    technical.trim().to_owned()
+}
+
+/// The code and the daemon's message, only ever shown inside the collapsed
+/// "technical details" disclosure.
+pub fn technical_details(code: ErrorCode, technical: &str) -> String {
+    match technical.trim() {
+        "" => error_code(code).to_owned(),
+        detail => format!("{} · {detail}", error_code(code)),
     }
 }
 
