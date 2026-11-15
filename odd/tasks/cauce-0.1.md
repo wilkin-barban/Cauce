@@ -517,3 +517,14 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Se habilitó `gtk4` con `features = ["v4_10"]` (única forma de tener `GtkFileDialog` y `gdk::FileList` con GTK 4.22.4; sin features posteriores).
 - **Excepción de tamaño documentada**: `view.rs` (303) y `flows.rs` (358) son mutuamente dependientes (la vista llama a `flows::wire` y los flujos usan los widgets), así que entran en un mismo commit de **664** líneas. Los demás: 1, 345, 254 y 6.
 - Deuda anotada: el desplegable de presets es plano (agrupar por categoría es de la página Presets, T18) y la inspección muestra un spinner de página, no uno por fila, porque `media.inspect` responde el lote completo.
+
+**L28 (T17 · C-042) — página Cola:**
+- RED: `unresolved import cauce_gui::pages::queue`. GREEN: 11 tests de cola; suite **230/230**; smoke `window-ready`, exit 0.
+- Estado puro sin GTK: `QueuePhase`, `QueueState` (`apply_jobs`, `apply_progress`, `allowed_actions`, `summary`), `progress_label`. Todas las acciones se derivan de la máquina de estados de `contracts.md` §4, no de una copia paralela.
+- UI: lista con progreso real (porcentaje, FPS, velocidad, ETA), barra indeterminada cuando `percent` es `None`, acciones **ocultas** cuando no aplican (pausar/reanudar/cancelar/reintentar/eliminar), confirmación con `AdwAlertDialog`, toggle de cola que refleja `queue.updated`, estado vacío distinto del error, y apertura de carpeta/archivo con `gio::AppInfo` (nunca shell).
+- Sin sondeo: se re-renderiza por eventos (`job.updated`, `job.progress`). Un `daemon.disconnected` deja la página en estado de error y el siguiente éxito la recupera.
+- Coalescencia: `job.progress` dispara un `jobs.list` agrupado y `apply_jobs` conserva la muestra en memoria más fresca por `updated_at`, así la barra nunca retrocede. Test `fresh_progress_survives_a_stale_list`.
+- **Excepción de tamaño documentada**: `view.rs` (370) y `flows.rs` (386) son mutuamente dependientes (la vista llama `flows::wire`; los flujos usan `view::row`, `update_row`, `show_phase`, `confirm`, `build_open`) y entran juntos: 769 líneas. Los otros: 383 y 306.
+- **Dos huecos de contrato detectados y NO resueltos por mi cuenta**:
+  1. `docs/ui-mvp.md` §5 habla de "Iniciar cola", pero `contracts.md` §6 no tiene `queue.start`: los trabajos arrancan cuando la cola está activa, así que el toggle de pausa/reanudar es el único control. Se documenta como interpretación, sin inventar un método.
+  2. `docs/contracts.md` §4 dice que un `interrupted` debe reencolarse por acción de la UI, pero §6 no expone ningún método de recuperación y `Retry` solo es válido desde `failed`. La fila de un `interrupted` queda sin acción. **Requiere decisión del usuario**: agregar `jobs.recover` (→ `JobAction::Recover`) al contrato, o extender `jobs.retry` a `interrupted`. No se implementó nada.
