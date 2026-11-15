@@ -267,11 +267,7 @@ pub fn show_phase(ui: &Ui, state: &QueueState) {
     if let Some(message) = state.last_error() {
         ui.error_page.set_description(Some(message));
     }
-    ui.queue_toggle.set_label(if state.queue_paused() {
-        t("queue.resume")
-    } else {
-        t("queue.pause")
-    });
+    ui.queue_toggle.set_label(t(state.toggle()));
     let hint = state.pause_hint();
     ui.hint.set_visible(hint.is_some());
     if let Some(hint) = hint {

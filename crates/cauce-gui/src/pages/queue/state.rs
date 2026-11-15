@@ -43,6 +43,8 @@ pub enum JobAction {
     Resume,
     Cancel,
     Retry,
+    /// Requeues an `interrupted` job (`docs/contracts.md` §4 and §6).
+    Recover,
     Remove,
 }
 
@@ -54,6 +56,7 @@ impl JobAction {
             JobAction::Resume => "jobs.resume",
             JobAction::Cancel => "jobs.cancel",
             JobAction::Retry => "jobs.retry",
+            JobAction::Recover => "jobs.recover",
             JobAction::Remove => "jobs.remove",
         }
     }
@@ -65,6 +68,7 @@ impl JobAction {
             JobAction::Resume => "queue.action_resume",
             JobAction::Cancel => "queue.action_cancel",
             JobAction::Retry => "queue.action_retry",
+            JobAction::Recover => "queue.recover",
             JobAction::Remove => "queue.action_remove",
         }
     }
@@ -81,6 +85,8 @@ impl JobAction {
             JobAction::Resume => "media-playback-start-symbolic",
             JobAction::Cancel => "process-stop-symbolic",
             JobAction::Retry => "view-refresh-symbolic",
+            // A different glyph from `retry`: recovery is not a second attempt.
+            JobAction::Recover => "edit-redo-symbolic",
             JobAction::Remove => "edit-delete-symbolic",
         }
     }
@@ -247,6 +253,17 @@ impl QueueState {
         self.queue_paused = paused;
     }
 
+    /// The header control: `queue.start` while paused, `queue.pause` while active
+    /// (`docs/contracts.md` §6). The key is both the call and the label, so the
+    /// two cannot disagree.
+    pub fn toggle(&self) -> &'static str {
+        if self.queue_paused {
+            "queue.start"
+        } else {
+            "queue.pause"
+        }
+    }
+
     /// Surfaces a concrete failure inside the page (`docs/ui-mvp.md` §9).
     pub fn set_error(&mut self, message: String) {
         self.last_error = Some(message);
@@ -257,19 +274,17 @@ impl QueueState {
         let Some(job) = self.jobs.iter().find(|job| job.id == id) else {
             return Vec::new();
         };
-        let mut actions = Vec::with_capacity(2);
-        for action in [
+        [
             JobAction::Pause,
             JobAction::Resume,
             JobAction::Cancel,
             JobAction::Retry,
+            JobAction::Recover,
             JobAction::Remove,
-        ] {
-            if allowed(action, job.state) {
-                actions.push(action);
-            }
-        }
-        actions
+        ]
+        .into_iter()
+        .filter(|action| allowed(*action, job.state))
+        .collect()
     }
 
     /// The footer counters.
@@ -313,6 +328,9 @@ fn allowed(action: JobAction, state: JobState) -> bool {
             JobState::Queued | JobState::Probing | JobState::Running | JobState::Paused
         ),
         JobAction::Retry => state == JobState::Failed,
+        // Only the recovery path of `docs/contracts.md` §4: it is not `retry`, and
+        // a job that was interrupted never resumes by itself.
+        JobAction::Recover => state == JobState::Interrupted,
         // Terminal (completed, cancelled) or still waiting; an active job can
         // never be removed from under its process.
         JobAction::Remove => state.is_terminal() || matches!(state, JobState::Queued),

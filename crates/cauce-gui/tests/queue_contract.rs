@@ -6,6 +6,7 @@
 //! without a display. The widgets are only a rendering of this state.
 
 use cauce_core::{Job, JobState, Progress, Timestamp};
+use cauce_gui::i18n::t;
 use cauce_gui::pages::queue::{JobAction, QueuePhase, QueueState, progress_label};
 
 fn ts(text: &str) -> Timestamp {
@@ -86,7 +87,7 @@ fn allowed_actions_follow_the_state_machine() {
         (JobState::Completed, vec![JobAction::Remove]),
         (JobState::Cancelled, vec![JobAction::Remove]),
         (JobState::Failed, vec![JobAction::Retry]),
-        (JobState::Interrupted, vec![]),
+        (JobState::Interrupted, vec![JobAction::Recover]),
     ];
 
     for (job_state, expected) in cases {
@@ -147,6 +148,55 @@ fn remove_is_offered_only_for_terminal_and_queued() {
             job_state.as_str()
         );
     }
+}
+
+#[test]
+fn recover_is_offered_only_for_interrupted() {
+    for job_state in all_states() {
+        let state = state_with(vec![job("a", job_state)]);
+        let offered = state.allowed_actions("a").contains(&JobAction::Recover);
+        assert_eq!(
+            offered,
+            job_state == JobState::Interrupted,
+            "reencolar en `{}`",
+            job_state.as_str()
+        );
+    }
+    assert_eq!(
+        JobAction::Recover.method(),
+        "jobs.recover",
+        "la acción llama al método del contrato"
+    );
+    assert!(
+        !JobAction::Recover.needs_confirmation(),
+        "reencolar no destruye nada"
+    );
+}
+
+#[test]
+fn queue_start_label_depends_on_the_paused_flag() {
+    let mut state = QueueState::new();
+    assert!(
+        !state.queue_paused(),
+        "una cola nueva está activa: no se pausa sola"
+    );
+    assert_eq!(
+        state.toggle(),
+        "queue.pause",
+        "cola activa: el control pausa"
+    );
+    assert_eq!(t(state.toggle()), "Pausar cola", "la etiqueta existe");
+
+    state.set_queue_paused(true);
+    assert_eq!(
+        state.toggle(),
+        "queue.start",
+        "cola pausada: el control inicia, nunca reanuda ni duplica"
+    );
+    assert_eq!(t(state.toggle()), "Iniciar cola", "la etiqueta existe");
+
+    state.set_queue_paused(false);
+    assert_eq!(state.toggle(), "queue.pause", "y vuelve a pausar");
 }
 
 #[test]

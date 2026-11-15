@@ -275,11 +275,13 @@ fn success(action: JobAction, name: &str) -> String {
         JobAction::Pause => "queue.action_paused",
         JobAction::Resume => "queue.action_resumed",
         JobAction::Retry => "queue.action_requeued",
+        JobAction::Recover => "queue.action_requeued",
     };
     t_with(key, "{name}", name)
 }
 
-/// `queue.pause` / `queue.resume`, with the answer reflected at once.
+/// `queue.pause` while the queue is active and `queue.start` while it is paused,
+/// with the answer reflected at once (`docs/contracts.md` §6).
 fn toggle_handle(
     ui: &Ui,
     client: &Rc<Client>,
@@ -293,12 +295,9 @@ fn toggle_handle(
         Rc::clone(render),
     );
     Rc::new(move || {
-        let pausing = !state.borrow().queue_paused();
-        let method = if pausing {
-            "queue.pause"
-        } else {
-            "queue.resume"
-        };
+        // The state owns the name, so the label and the call can never disagree.
+        let method = state.borrow().toggle();
+        let pausing = method == "queue.pause";
         let (ui, client, state, render) = (
             ui.clone(),
             Rc::clone(&client),
