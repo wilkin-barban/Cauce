@@ -35,6 +35,8 @@ pub struct ConversionChild {
     threads: Vec<JoinHandle<()>>,
     paused: bool,
     cancelled: bool,
+    /// A reader thread that panicked, remembered across a detach.
+    panicked: bool,
 }
 
 /// Runs `ffmpeg` with `args` in its own process group.
@@ -94,6 +96,7 @@ pub fn spawn(
         threads,
         paused: false,
         cancelled: false,
+        panicked: false,
     })
 }
 
@@ -166,24 +169,54 @@ impl ConversionChild {
         }
     }
 
+    /// Non-blocking status check: `None` while the child still runs.
+    ///
+    /// When the child already exited this reaps it (no zombie), caches the
+    /// status and releases the reader threads, so a caller whose pipes never
+    /// reach EOF — a helper still holding stderr, for instance — is not left
+    /// waiting on a stream-end marker that will never come. Calling it again
+    /// returns the cached status instead of erroring.
+    pub fn try_exit(&mut self) -> Result<Option<ExitStatus>, JobError> {
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+        let pid = self.pid;
+        let Some(child) = self.child.as_mut() else {
+            return Err(internal(pid, "el proceso ya no está disponible"));
+        };
+        let observed = child
+            .try_wait()
+            .map_err(|error| internal(pid, &format!("no se pudo consultar el proceso: {error}")))?;
+        let Some(status) = observed else {
+            return Ok(None);
+        };
+        self.status = Some(status);
+        self.detach_threads();
+        Ok(Some(status))
+    }
+
     /// Rejects control calls on a child that already exited.
     fn ensure_running(&mut self) -> Result<(), JobError> {
         if self.status.is_some() {
             return Err(not_running(self.pid));
         }
-        match self.child.as_mut() {
-            Some(child) => match child.try_wait() {
-                Ok(Some(status)) => {
-                    self.status = Some(status);
-                    Err(not_running(self.pid))
-                }
-                Ok(None) => Ok(()),
-                Err(error) => Err(internal(
-                    self.pid,
-                    &format!("no se pudo consultar: {error}"),
-                )),
-            },
-            None => Err(not_running(self.pid)),
+        let pid = self.pid;
+        let observed = match self.child.as_mut() {
+            Some(child) => child
+                .try_wait()
+                .map_err(|error| internal(pid, &format!("no se pudo consultar: {error}")))?,
+            None => return Err(not_running(pid)),
+        };
+        match observed {
+            Some(status) => {
+                self.status = Some(status);
+                // A control call may be the first to notice the exit; release the
+                // reader threads here too, so nobody is left waiting on a pipe a
+                // leaked helper still holds.
+                self.detach_threads();
+                Err(not_running(pid))
+            }
+            None => Ok(()),
         }
     }
 
@@ -235,7 +268,7 @@ impl ConversionChild {
     /// Joins both reader threads. A panicked thread is an internal error, never
     /// an `unwrap` on a poisoned lock.
     fn join_threads(&mut self) -> Result<(), JobError> {
-        let mut panicked = false;
+        let mut panicked = std::mem::take(&mut self.panicked);
         for thread in self.threads.drain(..) {
             if thread.join().is_err() {
                 panicked = true;
@@ -248,6 +281,19 @@ impl ConversionChild {
             ));
         }
         Ok(())
+    }
+
+    /// Joins the reader threads that already finished and forgets the rest.
+    ///
+    /// A thread still draining a pipe held open by a leaked helper must not
+    /// stall the caller: `try_exit` promises never to block, and the forgotten
+    /// thread ends on EOF without keeping anything alive.
+    fn detach_threads(&mut self) {
+        for thread in self.threads.drain(..) {
+            if thread.is_finished() && thread.join().is_err() {
+                self.panicked = true;
+            }
+        }
     }
 }
 
