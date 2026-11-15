@@ -1,25 +1,19 @@
-//! The Cola page: the real progress of every job, its state in Spanish and the
-//! controls the state machine allows (`docs/ui-mvp.md` §5, §9, §10 and §12;
-//! `docs/contracts.md` §2.4, §2.5, §4, §6 and §7).
+//! The Cola page: live jobs, real progress and the actions the state machine
+//! allows (`docs/ui-mvp.md` §5-§7, `docs/contracts.md` §4, §6 and §7).
 //!
 //! The module is split like the Convertir page so each part stays small:
 //!
-//! - [`state`] is the decision core. It has no GTK type, so the phase, the
-//!   allowed actions per state, the progress merge and the footer counters are
-//!   tested without a display.
-//! - [`view`] builds the widgets: the header toggle, the list of rows, the
-//!   indeterminate progress bar and the empty/error pages.
-//! - [`flows`] holds every daemon call and every event subscription, each
-//!   awaited through `glib::spawn_future_local`, so the main loop never blocks on
-//!   the socket and nothing polls on a timer.
+//! - [`state`] is the decision core (phase, allowed actions, summary) with no GTK
+//!   type, so every guard is tested without a display.
+//! - [`view`] builds the widgets: header toggle, rows, empty and error pages.
+//! - [`flows`] owns the daemon calls and the event loop; nothing polls on a timer.
 //!
-//! The page never owns the truth of the queue: it redraws from `jobs.list` plus
-//! the `job.updated`, `job.progress` and `queue.updated` events
-//! (`docs/ui-mvp.md` §12, T17 acceptance).
+//! The page never starts a conversion: jobs start when the queue is active, which
+//! is what the header toggle controls (`queue.pause` / `queue.resume`).
 
+pub mod flows;
 pub mod state;
+pub mod view;
 
-pub use state::{
-    JobAction, PAUSED_HINT, QueuePhase, QueueState, QueueSummary, clock, interrupted_hint,
-    progress_label, state_label,
-};
+pub use state::{JobAction, QueuePhase, QueueState, QueueSummary, progress_label};
+pub use view::page;

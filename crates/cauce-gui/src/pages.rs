@@ -104,6 +104,7 @@ pub fn all(client: &Rc<Client>) -> Vec<adw::NavigationPage> {
     for section in SECTIONS.iter() {
         match section.id {
             "convert" => pages.push(convert::page(client)),
+            "queue" => pages.push(queue::page(client)),
             _ => pages.push(placeholder(section)),
         }
     }
