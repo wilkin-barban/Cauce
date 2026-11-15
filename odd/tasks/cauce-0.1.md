@@ -383,3 +383,27 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Límite de contrato documentado (no se agregó `bit_depth`)**: `presets.md` decía "10-bit"; `contracts.md` §2.2 no declara bit depth en `VideoPlan`. Por decisión del usuario se reescribió a "hasta 10-bit (preserva si la fuente ya es 10-bit)" en los cuatro presets UHD y en la prueba obligatoria, sin tocar el contrato. Consecuencia: una fuente 8-bit sigue en 8-bit bajo Samsung/LG/Android TV/H.265.
 - **Downmix**: mi test original nombraba `system-samsung-tv` (6 canales declarados), donde 6→2 es imposible. Queda `system-smarttv-compat` para el caso 2 canales y Samsung verificado en `Some(6)`. La regla de no hacer upmix silencioso se mantiene y se explica en `reasoning`.
 - Cualquier preset con `normalize_audio: true` y códec de audio no soportado se rechaza con `PLAN_INVALID`; `BurnIn` nunca se produce en v0.1.
+
+**L12 (T7 · C-015 · 4e0b200 + dfb0d91) — RED observado, bug propio corregido y capacidad de filtros:**
+- RED real: `error[E0432]: unresolved import `cauce_core::command``.
+- GREEN: 12 tests de argv dorado; suite 65/65 al cerrar la unidad; fmt y clippy limpios.
+- **Bug propio corregido antes de commitear**: mi argv vinculante omitía `-crf`, así que la calidad del preset (CRF 21/24/18…) se habría ignorado y FFmpeg habría usado su default. Ahora `-c:v <encoder> -crf <quality>` se emite cuando el plan declara calidad, con el vector dorado actualizado. Sonda negativa verificada: al quitar la emisión, `builds_the_exact_argv_for_a_video_transcode` falla.
+- **Capacidad de filtros (pedido del usuario)**: `ssh ubuntu` tiene `zscale`, `tonemap`, `scale`, `format`, `fps` y los 10 encoders del MVP. El builder expone `REQUIRED_FILTERS` y `tonemap_filter_chain()` para que T9 verifique exactamente la misma cadena que emite.
+- Smoke real de la cadena HDR: `zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv` parsea y **sale 0 sobre una fuente con primarios BT.2020/SMPTE2084**; sobre `testsrc2` SDR sin etiquetar sale 187 ("no path between colorspaces"), que es correcto: la cadena solo se emite cuando el plan declara `ToneMapSdr` sobre una fuente HDR.
+- Reglas del builder: sin shell, sin binarios embebidos, allowlist de encoders y de filtros, rutas absolutas sin NUL, `-i` exactamente una vez, el último argumento es siempre el temporal, `normalize_audio` rechazado con `PLAN_INVALID` porque v0.1 no tiene filtro de normalización.
+- Corte: 263 (builder) + 389 (tests).
+
+**L13 (T8 · C-016 · fef5cc3 + 822703c + f1d0aea) — RED observado y alcance del validador:**
+- RED real: `error[E0432]: unresolved imports `cauce_core::resolve_output_path`, `cauce_core::temp_path`` y ``cauce_core::validate_output``.
+- GREEN: 8 tests de rutas + 9 de validación; suite 82/82; fmt y clippy limpios.
+- Política de duplicados: `suffix` incrementa ` (1)`, ` (2)`… mientras la ruta esté reservada; `skip` devuelve `OUTPUT_COLLISION` reintentable; `overwrite` devuelve la misma ruta y el archivo previo no se borra hasta que la salida valide; ninguna política puede devolver la ruta de entrada.
+- Temporales: `<dir>/.cauce-<job_id>.part.<ext>`, en la misma carpeta que el destino para permitir rename atómico; `job_id` restringido a `[A-Za-z0-9._-]`.
+- `validate_output` es puro y cubre `architecture.md` §12.1/3/4/5/6 (no vacío, duración con tolerancia `max(2000 ms, 3%)`, streams declarados, códec esperado por encoder, resolución dentro del límite). §12.2/§12.7 (ffprobe abre la salida, destino sin cambios) y §15 (carpeta escribible, symlinks) requieren I/O y quedan para `cauce-jobs`/`cauce-ffmpeg`.
+- Sondas negativas del worker: tolerancia ampliada al total → falla `rejects_a_duration_outside_tolerance`; guard de entrada desactivado → falla `never_returns_the_input_path`. Ambas revertidas.
+- Corte: 364 (módulo) + 149 (rutas) + 277 (validación).
+
+**L14 (G1 · Puerta del núcleo — cerrada)**
+- `cargo fmt --all --check`: limpio. `cargo clippy --workspace --all-targets -- -D warnings`: sin issues. `cargo test --workspace`: **82 tests, 0 fallos, 30 suites**. `cargo build --release --workspace`: OK en 14 s.
+- Sin GPU ni red en tests: las únicas apariciones de `nvenc`/`vaapi`/`qsv` son aserciones *negativas* (el catálogo no puede declarar encoders GPU y el builder debe rechazarlos). Cero dependencias de red.
+- Fronteras verificadas por `cargo metadata`: `cauce-core` solo depende de `serde`/`serde_json`; `cauce-i18n`, `cauce-jobs`, `cauce-daemon`, `cauce-gui` y `cauce-cli` siguen sin dependencias cruzadas.
+- Fase 1 completa: T1-T8 cerradas. La GUI no se tocó.
