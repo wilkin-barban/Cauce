@@ -694,3 +694,8 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - `03-presets.png` restaurada de `e40e8d5` y `05-diagnostico.png` restaurada de `7b84a52` — es una captura de **1440×900**, no de 960: el archivo original estaba mal nombrado y se corrige el nombre, no la imagen. `01-convertir` (1440) y `06-convertir-960` (960) se mantienen.
 - Set final: `01-convertir` 1440×900 · `02-cola` 1440×900 · `03-presets` 1440×900 · `04-ajustes` 1440×900 · `05-diagnostico` 1440×900 · `06-convertir-960` 960×640. Dimensiones verificadas leyendo la cabecera PNG de cada archivo.
 - Sigue faltando **Convertir con archivo** (DnD imposible sin ventana origen; `GtkFileDialog` no cierra bajo Xvfb).
+
+**L50 (05 corregida) — Diagnóstico real, sin restos:**
+- La `05-diagnostico.png` anterior era una captura vieja con barras negras y UI previa a las correcciones; **se reemplazó**.
+- Nueva captura por **ventana cliente** (`import -window $WID`) a **1440×900**: título **"Diagnóstico"**, sidebar resaltando Diagnóstico, sin fondo negro. Datos reales del daemon: FFmpeg y FFprobe 8.0.1, 226 encoders, 558 filtros, 8 núcleos, 324,7 GiB libres y daemon 0.1.0; acciones "Actualizar" (pill) y "Copiar informe" alineadas en la misma línea base.
+- Set definitivo: `01-convertir` · `02-cola` · `03-presets` · `04-ajustes` · `05-diagnostico` (todas 1440×900) · `06-convertir-960` (960×640).
