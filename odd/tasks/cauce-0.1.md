@@ -364,3 +364,13 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - División por la regla ≤400: `24d4e1e` capturas · `6620342` parser + captura MP4 (320) · `fd5987d` multiformato y bordes (247). Los 8 tests se escribieron antes de la implementación y se reparten entre los dos últimos commits; ambos comparten el mismo RED observado.
 - Hallazgo del fixture real: el AAC de `generate.sh` es mono (`channels: 1`), no estéreo. El test afirma el byte real, no el valor esperado a mano.
 - T4 se ejecutó delegado a un writer acotado; el parent verificó suite, fmt y clippy por su cuenta antes de commitear.
+
+**L10 (T5 · C-013 · d4e4ba8 + d3be22a + 204cab3) — RED observado, conflicto resuelto y decisiones:**
+- RED real: `error[E0432]: unresolved import `cauce_core::system_presets``. Segundo RED tras partir datos: `couldn't read .../catalog-video.json` y `catalog must contain `system-audio-mp3``.
+- GREEN: 4 tests de video, 3 de audio, 4 de catálogo completo; suite total 37/37; fmt y clippy limpios.
+- **Conflicto detectado y resuelto a favor de `docs/` (S11)**: mi handoff pedía `max_fps = 60` para `system-smarttv-hevc`, pero `presets.md:25` no declara frame rate para ese preset (solo 3840×2160). Se dejó `max_fps: null` y el test pasó a exigir 60 fps solo para Samsung, LG y Android TV. No se inventó una restricción.
+- **Desviación detectada en verificación propia y corregida**: 3 nombres no eran literales de `presets.md`. Quedaron como el documento: `system-smarttv-compat` EN `Maximum Compatibility`, `system-smarttv-hevc` EN `Efficient Quality`, `system-android-tv` ES `Android TV` / EN `Google TV` (PT-BR conserva `Android TV / Google TV`).
+  - Observación para el usuario: la columna "Nombre ES / EN" de `presets.md` es asimétrica en esos tres casos (el prefijo "Smart TV —" no aparece del lado EN). Si preferís nombres simétricos, hay que editar `presets.md`; no lo hice por mi cuenta.
+- Huecos de spec resueltos sin contradecir nada: `category` no está enumerado en `presets.md` → se usa {`tv`, `social`, `archive`, `audio`}; los 5 presets de audio declaran `subtitle_policy: remove` porque sus contenedores no llevan subtítulos; `system-audio-wav` deja `audio_bitrate` en `null` porque "PCM 16-bit" es formato de muestra, no tasa.
+- Datos partidos por dominio (`catalog-video.json` 8 presets, `catalog-audio.json` 5) para respetar la regla de ≤400 líneas: 378 + 246 + 212.
+- T5 se ejecutó delegado a un writer; el parent verificó los 13 IDs, los 39 nombres contra `presets.md` y el mapeo de campos con un script propio antes de commitear.
