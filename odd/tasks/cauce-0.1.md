@@ -782,3 +782,9 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Daemon**: método real **`jobs.clear_finished`** (`{}` → `{removed: N}`), un solo transacción en el store que borra completed/failed/cancelled/interrupted con sus eventos y reservas, un único `queue.updated`. `contracts.md` §6 actualizado. Nada de bucles de `jobs.remove` desde la GUI.
 - **Pluralización** ES/EN/PT-BR en 8 pares de claves.
 - Suite **309/309**, `fmt` y `clippy -D warnings` limpios. RED por área: `no method named clear_finished`, `método desconocido jobs.clear_finished`, `no method named summary_line`, `no method named notice`.
+
+**L59 (capturas de la selección y de la cola) — verificadas:**
+- **`02-cola.png` verificada**: resumen visible "1 en total · 0 activos · 0 en espera · **1 terminado**" (singular correcto), botones **Pausar cola** y **Limpiar lista** en la cabecera, trabajo "Completada" con barra llena y Abrir carpeta/archivo.
+- **`01-convertir.png`** y **`06-convertir-960.png`** recapturadas con el encabezado de selección nuevo.
+- **Pendiente documentado**: la captura con **2-3 archivos seleccionados** requiere el `GtkFileDialog`, que no se automatiza en Xvfb; no se simula. Queda cubierto por los tests de conteo, quitar uno, quitar todos y CTA deshabilitada.
+- **Paquete**: `sha256 c169a8c52fd88c8278b62f3369a8305e71660e1c79265f9f5ead47900db98cfc`, instalado (`0.1.0-1`) con `cauce.socket` **active**.

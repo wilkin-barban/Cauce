@@ -108,4 +108,8 @@ Two non-fixture AV1 + Opus 1280×720 videos were converted through the **install
 
 Both jobs finished `completed`; the GUI showed "Daemon: conectado" against the real `XDG_RUNTIME_DIR` with both rows marked "Completada". `cauce.socket` was active with `NRestarts=0` after the socket-activation fix.
 
-Package checksum: `15438697a20ea9bc663b3a7ce5936d9332b3b4142519de2009a111e39828877d` (rebuilt after the UX improvements: human error messages, real drop zone, preset categories with a fixed navigator, one custom preset and a five-field preset detail).
+Package checksum: `c169a8c52fd88c8278b62f3369a8305e71660e1c79265f9f5ead47900db98cfc` (rebuilt after the UX improvements: human error messages, real drop zone, preset categories with a fixed navigator, one custom preset and a five-field preset detail).
+
+## Selection clarity and queue cleanup
+
+Convert now states the selection ("Seleccionado (1)"/"Seleccionados (N)", total size, per-file remove, remove all) and names how many files go to the queue together with the preset and output folder. The queue shows total/active/waiting/finished and a "Limpiar lista" action backed by the real `jobs.clear_finished` method, which removes only terminal jobs in one transaction.
