@@ -120,6 +120,8 @@ Reglas:
 - `cancel` es válido desde `queued`, `probing`, `running` o `paused`.
 - Un reinicio convierte `probing`/`running`/`validating` en `interrupted`.
 - Un trabajo `interrupted` no se reencola automáticamente: la UI debe ofrecerlo.
+- `interrupted` solo aparece tras un reinicio del daemon; `retry` nunca lo produce.
+- `recover` (método `jobs.recover`, §6) solo es válido desde `interrupted` y lo devuelve a `queued` con un evento de motivo `recovery`. No reanuda nada por sí solo: el trabajo vuelve a la cola y el planificador lo toma cuando la cola está activa.
 - La cola pausada no inicia nuevos trabajos, pero permite cancelar los activos.
 
 ## 5. Transporte IPC
@@ -158,13 +160,23 @@ Envolvente de error:
 | `jobs.resume` | `id` | `Job` |
 | `jobs.cancel` | `id` | `Job` |
 | `jobs.retry` | `id` | `Job` |
+| `jobs.recover` | `id` | `Job` |
 | `jobs.remove` | `id` | `{removed: bool}` |
-| `queue.pause` / `queue.resume` | `{}` | `{paused: bool}` |
+| `queue.pause` / `queue.resume` / `queue.start` | `{}` | `{paused: bool}` |
 | `presets.list` | `{}` | `Preset[]` |
 | `settings.get` | `{}` | `Settings` |
 | `settings.set` | `Partial<Settings>` | `Settings` |
 | `system.capabilities` | `{}` | `Capabilities` |
 | `logs.list` | `limit?` | `LogEntry[]` |
+
+`queue.start` es un **alias explícito de `queue.resume`**: activa la cola y deja que el planificador tome el próximo trabajo `queued` en su siguiente tick. Garantías:
+
+- Nunca duplica un trabajo.
+- No cambia el estado de los trabajos `probing`, `running`, `paused`, `validating` ni `cancelling`.
+- Sobre una cola que ya está activa es una operación nula: responde `{"paused": false}`.
+- Emite un solo `queue.updated` por llamada.
+
+`jobs.recover` es la acción de usuario que reencola un trabajo `interrupted`: aplica `JobAction::Recover`, lo lleva a `queued` y emite un `job.updated` con el `Job` completo. Es inválido desde cualquier otro estado y responde `INVALID_INPUT` (no reintentable); no reanuda nada automáticamente, y `interrupted` no es alcanzable por `jobs.retry`.
 
 `Capabilities`: `ffmpeg_version`, `ffprobe_version`, `encoders[]`, `filters[]`, `cpu_cores`, `disk_free_bytes`, `daemon_version`, `ffmpeg_missing[]`, `warnings[]`.
 

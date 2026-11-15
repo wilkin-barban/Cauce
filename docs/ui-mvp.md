@@ -95,6 +95,7 @@ La acción de añadir nunca inicia una conversión por sí sola.
 | Reanudar | Solo si está `paused` |
 | Cancelar | Confirmación si el trabajo está activo; temporales según ajuste |
 | Reintentar | Solo `failed`; vuelve a `queued` |
+| Reencolar | Solo `interrupted`; llama `jobs.recover` y el trabajo vuelve a `queued` |
 | Eliminar | No borra el archivo de entrada; pide confirmación si está activo |
 
 Nunca se muestra un trabajo como completado si la validación falló.
@@ -181,7 +182,7 @@ Si el daemon se cae o se reinicia:
 2. Intenta reconectar con backoff.
 3. Al reconectar, llama `jobs.list` y reconstruye la cola.
 4. No inventa estados ni pierde selecciones locales.
-5. Los trabajos interrumpidos aparecen con acción **Reencolar**.
+5. Los trabajos interrumpidos aparecen con acción **Reencolar**: la fila llama `jobs.recover` y el trabajo queda `queued` en la lista. No se reanuda por sí solo.
 
 ## 13. Fuera de la GUI v0.1
 
