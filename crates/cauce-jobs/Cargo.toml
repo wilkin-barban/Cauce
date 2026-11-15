@@ -5,3 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Cauce persistent job queue on SQLite WAL"
+
+[dependencies]
+cauce-core = { path = "../cauce-core" }
+# SQLite is bundled on purpose: the build host must not need `libsqlite3-dev`
+# and the future `.deb` will not depend on `libsqlite3-0`.
+rusqlite = { version = "0.33", features = ["bundled"] }
+serde_json = "1"
+# UUIDv7 identifiers for jobs and for the fixtures the store tests create.
+uuid = { version = "1", features = ["v7"] }
