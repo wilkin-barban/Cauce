@@ -113,3 +113,13 @@ Package checksum: `c169a8c52fd88c8278b62f3369a8305e71660e1c79265f9f5ead47900db98
 ## Selection clarity and queue cleanup
 
 Convert now states the selection ("Seleccionado (1)"/"Seleccionados (N)", total size, per-file remove, remove all) and names how many files go to the queue together with the preset and output folder. The queue shows total/active/waiting/finished and a "Limpiar lista" action backed by the real `jobs.clear_finished` method, which removes only terminal jobs in one transaction.
+
+## Final feature set
+
+- **Human error messages**: every `ErrorCode` maps to an actionable sentence in ES/EN/PT-BR; the raw code and the daemon message live inside a collapsed "Detalles técnicos".
+- **Real drop zone**: full-width dashed card with icon, title and subtitle, a visible `drag-over` state, several files and folders per drop, keyboard accessible; the primary action stays visible at 960×640.
+- **Preset categories + one custom preset**: a fixed chip navigator (Todas · Smart TV · Web · Archivo · Audio · Personalizado), a five-field detail with the rest behind a disclosure, and "Mi preset" (MP4/MKV/WebM, H.264/H.265/VP9/AV1/Copiar, CRF or presets, resolution, audio codec, bitrate, subtitles) persisted in SQLite and resolved by the scheduler.
+- **Clear selection**: "Seleccionado (1)"/"Seleccionados (N)" with total size, per-file remove, "Quitar todos", and a sentence stating how many files will be queued together with the preset and folder.
+- **Queue cleanup**: total/active/waiting/finished summary and "Limpiar lista" backed by the real `jobs.clear_finished` method, which removes only terminal jobs in one transaction.
+- **File names with `&`, `<`, `>` and quotes** now render intact in every row (Pango markup escaping).
+- **Real media**: two non-fixture AV1 + Opus 1280×720 videos converted through the installed package with systemd socket activation enabled.
