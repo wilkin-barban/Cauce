@@ -103,7 +103,10 @@ struct Case {
 
 impl Case {
     fn new(tag: &str, toolchain: Toolchain) -> Self {
-        let dir = unique_dir(tag);
+        Self::in_dir(unique_dir(tag), toolchain)
+    }
+
+    fn in_dir(dir: PathBuf, toolchain: Toolchain) -> Self {
         let store = Store::open(&dir.join("cauce.db")).expect("abrir la base");
         let daemon = Arc::new(Daemon::new(store, vec![dir.clone(), repo_root()]));
         let events = daemon.events().subscribe();
@@ -148,8 +151,19 @@ impl Case {
     }
 
     /// Ticks until `done` holds, and fails the case on the deadline.
-    fn run_until(&mut self, id: &str, mut done: impl FnMut(&Self, &str) -> bool) {
-        let deadline = Instant::now() + DEADLINE;
+    fn run_until(&mut self, id: &str, done: impl FnMut(&Self, &str) -> bool) {
+        self.run_until_within(id, DEADLINE, "el estado esperado", done);
+    }
+
+    /// Ticks until `done` holds, naming `what` never happened after `limit`.
+    fn run_until_within(
+        &mut self,
+        id: &str,
+        limit: Duration,
+        what: &str,
+        mut done: impl FnMut(&Self, &str) -> bool,
+    ) {
+        let deadline = Instant::now() + limit;
         loop {
             self.pump(id);
             if done(self, id) {
@@ -157,7 +171,7 @@ impl Case {
             }
             assert!(
                 Instant::now() < deadline,
-                "estado esperado no alcanzado en {DEADLINE:?}: {}",
+                "{what} no ocurrió en {limit:?}: {}",
                 self.job(id)
             );
             tick(&self.daemon, &self.config).expect("tick");
@@ -244,6 +258,97 @@ fn fails_when_the_converter_produces_nothing() {
     );
     let output = job["output_path"].as_str().expect("salida");
     assert!(!Path::new(output).exists(), "no se publica nada");
+}
+
+#[test]
+fn a_converter_that_closes_stderr_does_not_hang_the_queue() {
+    let Some(input) = fixture() else {
+        return;
+    };
+    let dir = unique_dir("stderr-closed");
+    let holder_file = dir.join("holder.pid");
+    // stderr is inherited by a background helper, so the pipe stays open after
+    // the converter itself is gone: the stream-end marker never fires and only
+    // the exit status can finish the job. The converter writes nothing, so the
+    // only legal end is `OUTPUT_VALIDATION_FAILED`.
+    let script = format!(
+        "#!/bin/sh\nsleep 30 &\necho $! > {}\nexit 0\n",
+        holder_file.display()
+    );
+    let Some(toolchain) = fake_toolchain(&unique_dir("stderr-closed-bin"), &script) else {
+        return;
+    };
+    let mut case = Case::in_dir(dir, toolchain);
+    let id = case.add_job(&input);
+
+    // 10 s: the exit is immediate, so anything slower is the hang this covers.
+    case.run_until_within(
+        &id,
+        Duration::from_secs(10),
+        "el trabajo sin marcador de stderr",
+        |case, id| case.state(id) == JobState::Failed,
+    );
+    assert_trail(
+        &case.trail,
+        &["queued", "probing", "running", "validating", "failed"],
+    );
+    let job = case.job(&id);
+    assert_eq!(
+        job["error"]["code"],
+        json!("OUTPUT_VALIDATION_FAILED"),
+        "un conversor que no escribe nunca completa, aun sin marcador de stderr: {job}"
+    );
+    assert!(
+        job["finished_at"].is_string(),
+        "el trabajo quedó sellado: {job}"
+    );
+    // Idempotent: the handle already left the map, so later ticks cannot fail it
+    // twice — neither through the marker nor through `try_exit`.
+    for _ in 0..3 {
+        tick(&case.daemon, &case.config).expect("tick");
+    }
+    case.pump(&id);
+    assert_eq!(
+        case.trail.iter().filter(|state| *state == "failed").count(),
+        1,
+        "el trabajo se falla una sola vez: {:?}",
+        case.trail
+    );
+
+    // The queue is not blocked: with one slot, the next job still starts.
+    case.trail.clear();
+    let second = case.add_job(&input);
+    case.run_until_within(
+        &second,
+        Duration::from_secs(10),
+        "el segundo trabajo en cola en arrancar",
+        |case, id| case.state(id) == JobState::Running,
+    );
+    assert_trail(&case.trail, &["queued", "probing", "running"]);
+
+    kill_holder(&holder_file);
+}
+
+/// Kills the background helper that keeps the fake converter's pipes open.
+fn kill_holder(file: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        if let Ok(body) = std::fs::read_to_string(file) {
+            if let Ok(pid) = body.trim().parse::<i32>() {
+                break pid;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "el conversor falso no escribió el pid de su ayudante en {file:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // SAFETY: `kill(2)` only reads its arguments; the pid belongs to the helper
+    // this test started and is already gone once it exits.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
 }
 
 #[test]
