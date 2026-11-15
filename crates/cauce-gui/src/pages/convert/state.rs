@@ -6,6 +6,8 @@ use std::path::Path;
 
 use cauce_core::{Capabilities, ConversionPlan, MediaSnapshot, StreamAction, SubtitleAction};
 
+use crate::i18n::t;
+
 /// The action that unblocks a machine without FFmpeg (`docs/ui-mvp.md` §9).
 pub const FFMPEG_COMMAND: &str = "sudo apt install ffmpeg";
 
@@ -164,10 +166,11 @@ impl ConvertState {
         self.blocking = if capabilities.ffmpeg_missing.is_empty() {
             None
         } else {
-            Some(format!(
-                "Cauce necesita FFmpeg del sistema. Instalalo con `{FFMPEG_COMMAND}`. Falta: {}.",
-                capabilities.ffmpeg_missing.join(", ")
-            ))
+            Some(
+                t("convert.blocking")
+                    .replace("{command}", FFMPEG_COMMAND)
+                    .replace("{missing}", &capabilities.ffmpeg_missing.join(", ")),
+            )
         };
     }
 
@@ -243,7 +246,7 @@ pub fn summarize(snapshot: &MediaSnapshot) -> String {
     ];
     match snapshot.video_streams.first() {
         Some(video) => parts.push(format!("{}×{}", video.width, video.height)),
-        None => parts.push("solo audio".to_owned()),
+        None => parts.push(t("convert.audio_only").to_owned()),
     }
     let codecs: Vec<&str> = snapshot
         .video_streams
@@ -275,20 +278,20 @@ fn duration_text(duration_ms: u64) -> String {
 /// The plan preview sentence of `docs/ui-mvp.md` §4, built from the plan itself.
 pub fn plan_summary(plan: &ConversionPlan) -> String {
     let video = match plan.video.action {
-        StreamAction::Copy => "Copiar video",
-        StreamAction::Transcode => "Convertir video",
-        StreamAction::Remove => "Quitar video",
+        StreamAction::Copy => t("convert.summary_video_copy"),
+        StreamAction::Transcode => t("convert.summary_video_transcode"),
+        StreamAction::Remove => t("convert.summary_video_remove"),
     };
     let audio = match plan.audio.action {
-        StreamAction::Copy => "copiar audio",
-        StreamAction::Transcode => "convertir audio",
-        StreamAction::Remove => "quitar audio",
+        StreamAction::Copy => t("convert.summary_audio_copy"),
+        StreamAction::Transcode => t("convert.summary_audio_transcode"),
+        StreamAction::Remove => t("convert.summary_audio_remove"),
     };
     let subtitles = match plan.subtitles.action {
-        SubtitleAction::Copy => "copiar subtítulos",
-        SubtitleAction::Transcode => "convertir subtítulos",
-        SubtitleAction::Remove => "quitar subtítulos",
-        SubtitleAction::BurnIn => "incrustar subtítulos",
+        SubtitleAction::Copy => t("convert.summary_subtitles_copy"),
+        SubtitleAction::Transcode => t("convert.summary_subtitles_transcode"),
+        SubtitleAction::Remove => t("convert.summary_subtitles_remove"),
+        SubtitleAction::BurnIn => t("convert.summary_subtitles_burn_in"),
     };
     format!("{video} · {audio} · {subtitles} → {}", plan.container)
 }

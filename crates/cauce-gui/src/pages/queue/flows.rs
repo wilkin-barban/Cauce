@@ -22,11 +22,12 @@ use serde_json::{Value, json};
 use super::state::{JobAction, QueueState};
 use super::view::{self, Row, Ui};
 use crate::client::{self, Client};
+use crate::i18n::{t, t_with};
 use crate::pages::convert::base_name;
 
-/// Message of the banner and of the error page when the socket is gone
-/// (`docs/ui-mvp.md` §9 and §12).
-pub const OFFLINE: &str = "No se pudo conectar con el daemon.";
+/// Catalog key of the message the banner and the error page show when the socket
+/// is gone (`docs/ui-mvp.md` §9 and §12). The key, not the sentence.
+pub const OFFLINE: &str = "banner.daemon_down";
 
 /// Applies one action to one job: the action, its id and its base name.
 type Act = Rc<dyn Fn(JobAction, String, String)>;
@@ -165,10 +166,11 @@ fn action_button(action: JobAction, job: &Job, act: &Rc<RefCell<Option<Act>>>) -
     button
 }
 
-/// "Abrir carpeta" and "Abrir archivo" for a finished job: text buttons, so the
-/// accessible name is the label and no shell is involved.
+/// Open folder / open file for a finished job: text buttons, so the accessible
+/// name is the label and no shell is involved.
 fn open_buttons(row: &Row, job: &Job, open: &Rc<RefCell<Option<Open>>>) {
-    for (label, folder) in [("Abrir carpeta", true), ("Abrir archivo", false)] {
+    for (key, folder) in [("queue.open_folder", true), ("queue.open_file", false)] {
+        let label = t(key);
         let button = gtk::Button::with_label(label);
         button.add_css_class("flat");
         button.update_property(&[gtk::accessible::Property::Label(label)]);
@@ -210,9 +212,9 @@ fn build_refresh(
                 match client.call("jobs.list", json!({})).await {
                     Ok(value) => match serde_json::from_value::<Vec<Job>>(value) {
                         Ok(jobs) => state.borrow_mut().apply_jobs(jobs),
-                        Err(error) => state
-                            .borrow_mut()
-                            .set_error(format!("La cola llegó ilegible: {error}")),
+                        Err(error) => state.borrow_mut().set_error(
+                            t("queue.unreadable").replace("{error}", &error.to_string()),
+                        ),
                     },
                     Err(error) => state.borrow_mut().set_error(error.message),
                 }
@@ -267,13 +269,14 @@ fn build_act(
 }
 
 fn success(action: JobAction, name: &str) -> String {
-    match action {
-        JobAction::Cancel => format!("Cancelando «{name}»…"),
-        JobAction::Remove => format!("«{name}» ya no está en la cola."),
-        JobAction::Pause => format!("«{name}» en pausa."),
-        JobAction::Resume => format!("«{name}» reanudado."),
-        JobAction::Retry => format!("«{name}» vuelve a la cola."),
-    }
+    let key = match action {
+        JobAction::Cancel => "queue.action_cancelling",
+        JobAction::Remove => "queue.action_removed",
+        JobAction::Pause => "queue.action_paused",
+        JobAction::Resume => "queue.action_resumed",
+        JobAction::Retry => "queue.action_requeued",
+    };
+    t_with(key, "{name}", name)
 }
 
 /// `queue.pause` / `queue.resume`, with the answer reflected at once.
@@ -338,7 +341,7 @@ fn subscribe(
             let params = event.get("params").cloned().unwrap_or(Value::Null);
             match method {
                 client::DISCONNECTED_EVENT => {
-                    state.borrow_mut().set_error(OFFLINE.to_owned());
+                    state.borrow_mut().set_error(t(OFFLINE).to_owned());
                     render();
                 }
                 "queue.updated" => {

@@ -10,6 +10,22 @@
 
 use cauce_core::{Job, JobState, Progress};
 
+use crate::i18n::t;
+
+/// The ten states of `docs/contracts.md` §4, in transition order.
+pub const STATES: [JobState; 10] = [
+    JobState::Queued,
+    JobState::Probing,
+    JobState::Running,
+    JobState::Paused,
+    JobState::Validating,
+    JobState::Cancelling,
+    JobState::Completed,
+    JobState::Cancelled,
+    JobState::Failed,
+    JobState::Interrupted,
+];
+
 /// The four states of `docs/ui-mvp.md` §5: loading, no jobs, a list, or the error
 /// page with its retry action. Empty and error are never the same screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,15 +58,20 @@ impl JobAction {
         }
     }
 
-    /// Spanish label, also the accessible name of the icon-only button.
-    pub fn label(self) -> &'static str {
+    /// Catalog key of the label, which is also the accessible name of the button.
+    pub fn label_key(self) -> &'static str {
         match self {
-            JobAction::Pause => "Pausar trabajo",
-            JobAction::Resume => "Reanudar trabajo",
-            JobAction::Cancel => "Cancelar trabajo",
-            JobAction::Retry => "Reintentar trabajo",
-            JobAction::Remove => "Eliminar de la cola",
+            JobAction::Pause => "queue.action_pause",
+            JobAction::Resume => "queue.action_resume",
+            JobAction::Cancel => "queue.action_cancel",
+            JobAction::Retry => "queue.action_retry",
+            JobAction::Remove => "queue.action_remove",
         }
+    }
+
+    /// The translated label of the action in the current locale.
+    pub fn label(self) -> &'static str {
+        t(self.label_key())
     }
 
     /// Symbolic icon shipped by the Adwaita theme: no borrowed asset.
@@ -122,12 +143,20 @@ impl QueueSummary {
 
     /// One line for the page footer, skipping the groups that are empty.
     pub fn footer(&self) -> String {
-        let mut parts = vec![format!("{} en total", self.total())];
+        let mut parts = vec![t("queue.footer_total").replace("{n}", &self.total().to_string())];
         if self.active() > 0 {
-            parts.push(named(self.active(), "activo", "activos"));
+            parts.push(named(
+                self.active(),
+                t("queue.footer_active"),
+                t("queue.footer_active_plural"),
+            ));
         }
         if self.queued > 0 {
-            parts.push(named(self.queued, "en espera", "en espera"));
+            parts.push(named(
+                self.queued,
+                t("queue.footer_queued"),
+                t("queue.footer_queued_plural"),
+            ));
         }
         parts.join(" · ")
     }
@@ -266,12 +295,13 @@ impl QueueState {
 
     /// A quiet line under the header while the queue does not start new jobs.
     pub fn pause_hint(&self) -> Option<&'static str> {
-        self.queue_paused.then_some(PAUSED_HINT)
+        self.queue_paused.then(|| t(PAUSED_HINT))
     }
 }
 
-/// Shown while `queue.pause` is in effect (`docs/ui-mvp.md` §5).
-pub const PAUSED_HINT: &str = "La cola está pausada: los trabajos en curso siguen convirtiéndose.";
+/// Catalog key of the line shown while `queue.pause` is in effect
+/// (`docs/ui-mvp.md` §5), so the hint follows the locale.
+pub const PAUSED_HINT: &str = "queue.paused_hint";
 
 /// The five action guards of `docs/ui-mvp.md` §5 and `docs/contracts.md` §4.
 fn allowed(action: JobAction, state: JobState) -> bool {
@@ -289,25 +319,31 @@ fn allowed(action: JobAction, state: JobState) -> bool {
     }
 }
 
-/// Spanish state of a row: never colour alone (`docs/ui-mvp.md` §10).
-pub fn state_label(state: JobState) -> &'static str {
+/// Catalog key of the state of a row; the name is never colour alone
+/// (`docs/ui-mvp.md` §10).
+pub fn state_key(state: JobState) -> &'static str {
     match state {
-        JobState::Queued => "En espera",
-        JobState::Probing => "Analizando",
-        JobState::Running => "Convirtiendo",
-        JobState::Paused => "En pausa",
-        JobState::Validating => "Validando",
-        JobState::Cancelling => "Cancelando",
-        JobState::Completed => "Completada",
-        JobState::Cancelled => "Cancelada",
-        JobState::Failed => "Fallida",
-        JobState::Interrupted => "Interrumpida",
+        JobState::Queued => "state.queued",
+        JobState::Probing => "state.probing",
+        JobState::Running => "state.running",
+        JobState::Paused => "state.paused",
+        JobState::Validating => "state.validating",
+        JobState::Cancelling => "state.cancelling",
+        JobState::Completed => "state.completed",
+        JobState::Cancelled => "state.cancelled",
+        JobState::Failed => "state.failed",
+        JobState::Interrupted => "state.interrupted",
     }
+}
+
+/// The translated state of a row.
+pub fn state_label(state: JobState) -> &'static str {
+    t(state_key(state))
 }
 
 /// Copy of a job whose process died with the daemon (`docs/ui-mvp.md` §12).
 pub fn interrupted_hint() -> &'static str {
-    "El daemon se reinició: este trabajo no se reencola solo."
+    t("queue.interrupted_hint")
 }
 
 /// What the progress bar says. No duration means unknown percent, never `0 %`
@@ -320,17 +356,17 @@ pub fn progress_label(
 ) -> String {
     let mut parts = Vec::with_capacity(4);
     parts.push(match percent {
-        Some(percent) => format!("{percent:.0} %"),
-        None => "Progreso desconocido".to_owned(),
+        Some(percent) => format!("{percent:.0} {}", t("queue.percent_unit")),
+        None => t("queue.unknown_percent").to_owned(),
     });
     if let Some(fps) = fps {
-        parts.push(format!("{fps:.1} FPS"));
+        parts.push(format!("{fps:.1} {}", t("queue.fps_unit")));
     }
     if let Some(speed) = speed {
-        parts.push(format!("{speed:.2}×"));
+        parts.push(format!("{speed:.2}{}", t("queue.speed_unit")));
     }
     if let Some(eta) = eta {
-        parts.push(format!("faltan {}", clock(eta)));
+        parts.push(t("queue.eta").replace("{clock}", &clock(eta)));
     }
     parts.join(" · ")
 }

@@ -17,6 +17,7 @@ use serde_json::json;
 use super::state::{ConvertState, expand_dropped_folder, plan_summary};
 use super::view::{self, Ui, clear_plan, parent_window, text_line};
 use crate::client::Client;
+use crate::i18n::{localized_preset_name, t};
 
 /// Connects every interaction of the page and loads the daemon's first answers.
 pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
@@ -165,12 +166,13 @@ fn inspect_handle(
                         }
                         None
                     }
-                    Err(error) => Some(format!("Inspección ilegible: {error}")),
+                    Err(error) => {
+                        Some(t("convert.unreadable").replace("{error}", &error.to_string()))
+                    }
                 },
                 Err(error) => Some(error.message),
             };
-            let message = failure
-                .unwrap_or_else(|| "El daemon no devolvió datos para este archivo.".to_owned());
+            let message = failure.unwrap_or_else(|| t("convert.daemon_no_data").to_owned());
             state.borrow_mut().fail_pending(&message);
             refresh();
             run_plan();
@@ -221,8 +223,10 @@ fn queue_handle(
                     let count = serde_json::from_value::<Vec<Job>>(value)
                         .map_or(expected, |jobs| jobs.len());
                     state.borrow_mut().clear();
-                    ui.confirm_label.set_label(&format!(
-                        "Se añadieron {count} trabajos a la cola. Inicialos desde Cola."
+                    ui.confirm_label.set_label(&crate::i18n::t_with(
+                        "convert.added_jobs",
+                        "{n}",
+                        &count.to_string(),
                     ));
                     ui.confirm_label.set_visible(true);
                     run_plan();
@@ -239,10 +243,9 @@ fn picker_handle(ui: &Ui, add_paths: &Rc<dyn Fn(Vec<String>)>, folder: bool) -> 
     let (drop_zone, add_paths) = (ui.drop_zone.clone(), Rc::clone(add_paths));
     Rc::new(move || {
         let dialog = gtk::FileDialog::new();
-        dialog.set_title(if folder {
-            "Añadir carpeta"
-        } else {
-            "Añadir archivos"
+        dialog.set_title(match folder {
+            true => t("convert.add_folder"),
+            false => t("convert.add_files"),
         });
         let parent = parent_window(&drop_zone);
         let add_paths = Rc::clone(&add_paths);
@@ -287,7 +290,7 @@ fn output_handle(
     let (refresh, run_plan) = (Rc::clone(refresh), Rc::clone(run_plan));
     move |_| {
         let dialog = gtk::FileDialog::new();
-        dialog.set_title("Elegir carpeta de salida");
+        dialog.set_title(t("convert.folder_dialog"));
         let parent = parent_window(&drop_zone);
         let (state, refresh, run_plan) =
             (Rc::clone(&state), Rc::clone(&refresh), Rc::clone(&run_plan));
@@ -335,7 +338,11 @@ fn bootstrap(
             .ok()
             .and_then(|value| serde_json::from_value::<Vec<Preset>>(value).ok());
         if let Some(list) = list {
-            let names: Vec<&str> = list.iter().map(|preset| preset.name_es.as_str()).collect();
+            let names: Vec<String> = list
+                .iter()
+                .map(|preset| localized_preset_name(preset).to_owned())
+                .collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
             ui.preset_dropdown
                 .set_model(Some(&gtk::StringList::new(&names)));
             let first = list.first().map(|preset| preset.id.clone());

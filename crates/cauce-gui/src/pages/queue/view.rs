@@ -22,16 +22,17 @@ use adw::{gio, gtk};
 use cauce_core::Job;
 use libadwaita as adw;
 
-use super::state::{JobAction, PAUSED_HINT, QueueState, progress_label, state_label};
+use super::state::{JobAction, QueueState, progress_label, state_label};
 use crate::client::Client;
+use crate::i18n::t;
 use crate::pages::convert::base_name;
 
-/// Headline of the empty page (`docs/ui-mvp.md` §5).
-pub const EMPTY_TITLE: &str = "No hay trabajos en la cola";
+/// Catalog key of the empty headline (`docs/ui-mvp.md` §5).
+pub const EMPTY_TITLE: &str = "queue.empty_title";
 
-/// How to put something in it, without turning the empty page into an error.
-pub const EMPTY_DESCRIPTION: &str = "Abrí Convertir, arrastrá tus archivos o una carpeta, elegí un preset y pulsá \
-     «Añadir a la cola».";
+/// Catalog key of how to put something in the queue, so the empty page is never
+/// an error page.
+pub const EMPTY_DESCRIPTION: &str = "queue.empty_description";
 
 /// Every widget of the page, plus the page itself.
 #[derive(Clone)]
@@ -53,10 +54,10 @@ pub struct Ui {
 impl Ui {
     fn build() -> Self {
         let header = adw::HeaderBar::new();
-        header.set_title_widget(Some(&adw::WindowTitle::new("Cola", "")));
-        let queue_toggle = gtk::Button::with_label("Pausar cola");
+        header.set_title_widget(Some(&adw::WindowTitle::new(t("section.queue_title"), "")));
+        let queue_toggle = gtk::Button::with_label(t("queue.pause"));
         queue_toggle.add_css_class("flat");
-        queue_toggle.set_tooltip_text(Some("Pausar o reanudar la cola"));
+        queue_toggle.set_tooltip_text(Some(t("queue.toggle_tooltip")));
         header.pack_end(&queue_toggle);
 
         let jobs_list = gtk::ListBox::new();
@@ -75,9 +76,9 @@ impl Ui {
         empty.set_margin_top(36);
         empty.set_margin_bottom(36);
         empty.append(&gtk::Image::from_icon_name("view-list-symbolic"));
-        empty.append(&headline(EMPTY_TITLE));
+        empty.append(&headline(t(EMPTY_TITLE)));
         let empty_text = text_line("dim-label");
-        empty_text.set_label(EMPTY_DESCRIPTION);
+        empty_text.set_label(t(EMPTY_DESCRIPTION));
         empty_text.set_justify(gtk::Justification::Center);
         empty_text.set_max_width_chars(48);
         empty.append(&empty_text);
@@ -87,12 +88,12 @@ impl Ui {
         loading.set_valign(gtk::Align::Center);
         loading.set_halign(gtk::Align::Center);
         loading.append(&spinner);
-        loading.append(&gtk::Label::new(Some("Leyendo la cola…")));
+        loading.append(&gtk::Label::new(Some(t("queue.loading"))));
 
         let error_page = adw::StatusPage::new();
         error_page.set_icon_name(Some("dialog-error-symbolic"));
-        error_page.set_title("No se pudo leer la cola");
-        let retry_button = gtk::Button::with_label("Reintentar");
+        error_page.set_title(t("queue.error_title"));
+        let retry_button = gtk::Button::with_label(t("queue.retry"));
         retry_button.add_css_class("pill");
         retry_button.set_halign(gtk::Align::Center);
         error_page.set_child(Some(&retry_button));
@@ -105,7 +106,7 @@ impl Ui {
         stack.set_vexpand(true);
 
         let hint = text_line("dim-label");
-        hint.set_label(PAUSED_HINT);
+        hint.set_label("");
         hint.set_visible(false);
         let notice = text_line("error");
         notice.set_visible(false);
@@ -125,7 +126,7 @@ impl Ui {
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.set_content(Some(&body));
-        let page = adw::NavigationPage::new(&toolbar, "Cola");
+        let page = adw::NavigationPage::new(&toolbar, t("section.queue_title"));
         page.set_tag(Some("queue"));
 
         Self {
@@ -161,7 +162,7 @@ pub struct Row {
     pub actions: gtk::Box,
 }
 
-/// Builds one row: base name, preset, Spanish state, bar and the action slot.
+/// Builds one row: base name, localized preset name, state, bar and actions.
 pub fn row(job: &Job, preset_name: &str) -> Row {
     let title = gtk::Label::new(Some(&base_name(&job.input_path)));
     title.set_xalign(0.0);
@@ -267,9 +268,9 @@ pub fn show_phase(ui: &Ui, state: &QueueState) {
         ui.error_page.set_description(Some(message));
     }
     ui.queue_toggle.set_label(if state.queue_paused() {
-        "Reanudar cola"
+        t("queue.resume")
     } else {
-        "Pausar cola"
+        t("queue.pause")
     });
     let hint = state.pause_hint();
     ui.hint.set_visible(hint.is_some());
@@ -283,18 +284,18 @@ pub fn show_phase(ui: &Ui, state: &QueueState) {
 pub(super) fn confirm(ui: &Ui, action: JobAction, name: &str, run: Rc<dyn Fn()>) {
     let (heading, body, accept) = match action {
         JobAction::Cancel => (
-            "¿Cancelar el trabajo?",
-            format!("Se detendrá «{name}»; el archivo final no se publicará."),
-            "Cancelar trabajo",
+            t("queue.confirm_cancel_title"),
+            t("queue.confirm_cancel_body").replace("{name}", name),
+            t("queue.confirm_cancel_accept"),
         ),
         _ => (
-            "¿Quitar de la cola?",
-            format!("Se quitará «{name}» de la cola. El archivo de entrada no se toca."),
-            "Quitar",
+            t("queue.confirm_remove_title"),
+            t("queue.confirm_remove_body").replace("{name}", name),
+            t("queue.confirm_remove_accept"),
         ),
     };
     let dialog = adw::AlertDialog::new(Some(heading), Some(&body));
-    dialog.add_response("back", "Volver");
+    dialog.add_response("back", t("queue.confirm_back"));
     dialog.add_response("confirm", accept);
     dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
     dialog.set_default_response(Some("back"));
@@ -320,10 +321,7 @@ pub(super) fn build_open(ui: &Ui) -> Open {
         if !Path::new(&path).exists() {
             show_notice(
                 &ui,
-                Some(format!(
-                    "No se encontró «{path}». Puede que lo hayas movido o eliminado; el \
-                     trabajo sigue en la lista."
-                )),
+                Some(t("queue.notice_missing").replace("{path}", &path)),
             );
             return;
         }
@@ -331,7 +329,14 @@ pub(super) fn build_open(ui: &Ui) -> Open {
         if let Err(error) =
             gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>)
         {
-            show_notice(&ui, Some(format!("No se pudo abrir «{path}»: {error}")));
+            show_notice(
+                &ui,
+                Some(
+                    t("queue.notice_open_failed")
+                        .replace("{path}", &path)
+                        .replace("{error}", &error.to_string()),
+                ),
+            );
         }
     })
 }

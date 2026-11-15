@@ -21,9 +21,11 @@ use super::state::{
     ConvertPhase, ConvertState, FFMPEG_COMMAND, RejectedInput, base_name, summarize,
 };
 use crate::client::Client;
+use crate::i18n::{localized_preset_description, t};
 
-/// Text of the drop zone (`docs/ui-mvp.md` §4).
-pub const DROP_HINT: &str = "Arrastrá videos, audios o una carpeta";
+/// Catalog key of the drop zone (`docs/ui-mvp.md` §4). The key, not the sentence:
+/// `pages::convert` re-exports it and the view translates it at build time.
+pub const DROP_HINT: &str = "convert.drop_hint";
 
 /// Every widget of the page, plus the page itself.
 #[derive(Clone)]
@@ -38,6 +40,7 @@ pub struct Ui {
     pub rejected_box: gtk::Box,
     pub spinner: gtk::Spinner,
     pub inspecting: gtk::Box,
+    pub phase_label: gtk::Label,
     pub error_label: gtk::Label,
     pub output_row: adw::ActionRow,
     pub output_button: gtk::Button,
@@ -55,14 +58,14 @@ pub struct Ui {
 impl Ui {
     fn build() -> Self {
         let header = adw::HeaderBar::new();
-        header.set_title_widget(Some(&adw::WindowTitle::new("Convertir", "")));
+        header.set_title_widget(Some(&adw::WindowTitle::new(t("section.convert_title"), "")));
 
-        let drop_zone = gtk::Button::with_label(DROP_HINT);
+        let drop_zone = gtk::Button::with_label(t(DROP_HINT));
         drop_zone.add_css_class("pill");
         drop_zone.set_margin_top(18);
         drop_zone.set_margin_bottom(18);
-        let add_files = gtk::Button::with_label("Añadir archivos");
-        let add_folder = gtk::Button::with_label("Añadir carpeta");
+        let add_files = gtk::Button::with_label(t("convert.add_files"));
+        let add_folder = gtk::Button::with_label(t("convert.add_folder"));
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.append(&add_files);
         actions.append(&add_folder);
@@ -70,43 +73,48 @@ impl Ui {
         let files_list = readable_list();
         let rejected_list = readable_list();
         let rejected_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        rejected_box.append(&heading("Rechazados"));
+        rejected_box.append(&heading(t("convert.rejected")));
         rejected_box.append(&rejected_list);
         rejected_box.set_visible(false);
 
         let spinner = gtk::Spinner::new();
         let inspecting = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         inspecting.append(&spinner);
-        inspecting.append(&gtk::Label::new(Some("Inspeccionando con FFprobe…")));
+        inspecting.append(&gtk::Label::new(Some(t("convert.inspecting"))));
         inspecting.set_visible(false);
+
+        // Empty, ready and partial are sentences, never only the spinner state
+        // (`docs/ui-mvp.md` §4).
+        let phase_label = text_line("dim-label");
+        phase_label.set_label(t("convert.phase_empty"));
 
         let error_label = text_line("error");
         error_label.set_visible(false);
 
         let output_row = adw::ActionRow::new();
-        output_row.set_title("Carpeta de salida");
-        output_row.set_subtitle("Sin elegir");
-        let output_button = gtk::Button::with_label("Elegir…");
+        output_row.set_title(t("convert.output_folder"));
+        output_row.set_subtitle(t("convert.not_chosen"));
+        let output_button = gtk::Button::with_label(t("convert.choose"));
         output_button.add_css_class("flat");
         output_row.add_suffix(&output_button);
         let output_group = adw::PreferencesGroup::new();
-        output_group.set_title("Destino");
+        output_group.set_title(t("convert.output_group"));
         output_group.add(&output_row);
 
-        let preset_dropdown = gtk::DropDown::from_strings(&["Cargando presets…"]);
+        let preset_dropdown = gtk::DropDown::from_strings(&[t("convert.loading_presets")]);
         let preset_row = adw::ActionRow::new();
-        preset_row.set_title("Formato de salida");
+        preset_row.set_title(t("convert.output_format"));
         preset_row.add_suffix(&preset_dropdown);
         let preset_description = text_line("dim-label");
         preset_description.set_visible(false);
         let preset_group = adw::PreferencesGroup::new();
-        preset_group.set_title("Preset");
+        preset_group.set_title(t("convert.preset_group"));
         preset_group.add(&preset_row);
 
         let plan_summary_line = text_line("body");
         let plan_reasons = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let plan_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        plan_box.append(&heading("Resumen del plan"));
+        plan_box.append(&heading(t("convert.plan_heading")));
         plan_box.append(&plan_summary_line);
         plan_box.append(&plan_reasons);
         plan_box.set_visible(false);
@@ -114,7 +122,7 @@ impl Ui {
         let confirm_label = text_line("success");
         confirm_label.set_visible(false);
 
-        let queue_button = gtk::Button::with_label("Añadir a la cola");
+        let queue_button = gtk::Button::with_label(t("convert.queue_button"));
         queue_button.add_css_class("suggested-action");
         queue_button.add_css_class("pill");
         queue_button.set_halign(gtk::Align::Start);
@@ -122,15 +130,17 @@ impl Ui {
 
         let blocked = adw::StatusPage::new();
         blocked.set_icon_name(Some("dialog-warning-symbolic"));
-        blocked.set_title("Falta FFmpeg");
-        let copy_button = gtk::Button::with_label("Copiar «sudo apt install ffmpeg»");
+        blocked.set_title(t("convert.blocked_title"));
+        let copy_button = gtk::Button::with_label(
+            &t("convert.copy_command").replace("{command}", FFMPEG_COMMAND),
+        );
         copy_button.add_css_class("pill");
         blocked.set_child(Some(&copy_button));
         copy_button.connect_clicked(|button| {
             if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(FFMPEG_COMMAND);
             }
-            button.set_label("Comando copiado");
+            button.set_label(t("convert.command_copied"));
         });
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -142,6 +152,7 @@ impl Ui {
         body.append(&actions);
         body.append(&inspecting);
         body.append(&files_list);
+        body.append(&phase_label);
         body.append(&rejected_box);
         body.append(&error_label);
         body.append(&output_group);
@@ -161,7 +172,7 @@ impl Ui {
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.set_content(Some(&stack));
-        let page = adw::NavigationPage::new(&toolbar, "Convertir");
+        let page = adw::NavigationPage::new(&toolbar, t("section.convert_title"));
         page.set_tag(Some("convert"));
 
         Self {
@@ -175,6 +186,7 @@ impl Ui {
             rejected_box,
             spinner,
             inspecting,
+            phase_label,
             error_label,
             output_row,
             output_button,
@@ -279,13 +291,21 @@ pub fn refresh(
         ui.error_label.set_label(state.error().unwrap_or_default());
         ui.error_label.set_visible(state.error().is_some());
         ui.output_row
-            .set_subtitle(state.output_dir().unwrap_or("Sin elegir"));
+            .set_subtitle(state.output_dir().unwrap_or(t("convert.not_chosen")));
+        // The ratified column of the current locale, never a catalog key.
         let description = state.preset_id().and_then(|id| {
             presets
                 .borrow()
                 .iter()
                 .find(|preset| preset.id == id)
-                .map(|preset| preset.description_es.clone())
+                .map(|preset| localized_preset_description(preset).to_owned())
+        });
+        ui.phase_label.set_visible(state.error().is_none());
+        ui.phase_label.set_label(match state.phase() {
+            ConvertPhase::Empty => t("convert.phase_empty"),
+            ConvertPhase::Ready => t("convert.phase_ready"),
+            ConvertPhase::Partial => t("convert.phase_partial"),
+            _ => "",
         });
         ui.preset_description.set_visible(description.is_some());
         if let Some(text) = description {
