@@ -619,3 +619,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Captura `odd/screenshots/01-convertir.png`**: sidebar con las cinco secciones, Convertir con drop zone, Destino, preset real (`AdwComboRow`) con su descripción, botón "Añadir a la cola" y pie "Daemon: conectado". Una sola barra de título: sin controles duplicados.
 - **Bloqueo honesto**: capturar Cola con un trabajo real, Presets, Ajustes y ejecutar una conversión *desde la UI* requiere interacción (clics). El host de QA no tiene `xdotool` y la app no acepta una sección inicial por entorno, así que esas cuatro piezas **no están verificadas visualmente**. No las invento ni las declaro hechas.
 - Decisión pendiente del usuario: autorizar (a) una bandera de QA `CAUCE_SECTION` en `window.rs` para abrir una sección concreta y capturarla, o (b) instalar `xdotool` en el host de QA y automatizar los clics. Con cualquiera de las dos se completan las cinco capturas y la conversión desde la UI.
+
+**L41 (QA visual con xdotool) — automatización insuficiente, sin capturas falsas:**
+- `xdotool` instalado en el host de QA (passwordless sudo). Los clics por geometría **funcionan**: con eso se capturó Convertir.
+- **Fracaso concreto**: el `GtkFileDialog` de "Añadir archivos" no aceptó la ruta escrita (`Ctrl+L` + `type` + `Return`) bajo Xvfb **sin window manager**; el diálogo quedó abierto y los clics siguientes cayeron sobre él. Las capturas de Cola, Presets y Ajustes mostraban el diálogo, no esas páginas.
+- **Decisión**: se borraron esas cuatro capturas en vez de commitear evidencia inválida. Solo queda `01-convertir.png`, que sí es la página real del paquete instalado.
+- Causa raíz y arreglo: falta un **window manager** en el host de QA (`xdotool windowactivate` falla con "windowmanager claims not to support _NET_ACTIVE_WINDOW", y los diálogos modales no se gestionan como en un escritorio real). Instalar `openbox` (o similar) y repetir el guion es el camino; reintentar sin WM no aporta.
+- Consecuencia: **no hay lista de defectos visuales de Cola, Presets ni Ajustes** porque no se observaron. La conversión iniciada desde la UI tampoco se ejecutó.
