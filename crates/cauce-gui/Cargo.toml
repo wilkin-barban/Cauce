@@ -10,7 +10,7 @@ description = "Cauce native GTK4 and Libadwaita desktop interface"
 cauce-core = { path = "../cauce-core" }
 # System GTK 4.22 and libadwaita 1.9 (`docs/architecture.md` §13). No vendored
 # or bundled feature: the `.deb` links against the distribution libraries.
-gtk4 = "0.11"
+gtk4 = { version = "0.11", features = ["v4_10"] }
 libadwaita = { version = "0.9", features = ["v1_9"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
