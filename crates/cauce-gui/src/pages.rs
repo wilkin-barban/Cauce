@@ -1,11 +1,12 @@
 //! The five sections of the MVP shell: Convertir, Cola, Presets, Diagnóstico and
 //! Ajustes (`docs/ui-mvp.md` §2 and `docs/architecture.md` §13).
 //!
-//! Convertir is a real page since T16 and lives in [`convert`]. The other four are
-//! still an `AdwNavigationPage` holding an `AdwToolbarView` with a short
-//! `AdwStatusPage` that says what the section will do, so T17-T18 can replace the
-//! body without touching the window. Icons are symbolic names the Adwaita theme
-//! already ships: nothing here borrows an asset from another project.
+//! Convertir is a real page since T16 and lives in [`convert`]; Cola is a real
+//! page since T17 and lives in [`queue`]. The other three are still an
+//! `AdwNavigationPage` holding an `AdwToolbarView` with a short `AdwStatusPage`
+//! that says what the section will do, so T18 can replace the body without
+//! touching the window. Icons are symbolic names the Adwaita theme already ships:
+//! nothing here borrows an asset from another project.
 
 use std::rc::Rc;
 
@@ -15,6 +16,7 @@ use libadwaita as adw;
 use crate::client::Client;
 
 pub mod convert;
+pub mod queue;
 
 /// One entry of the sidebar and its placeholder page.
 pub struct Section {
@@ -95,16 +97,15 @@ pub fn placeholder(section: &Section) -> adw::NavigationPage {
     page
 }
 
-/// Builds every section, in sidebar order: Convertir first, then the placeholders.
+/// Builds every section, in sidebar order: Convertir first, then Cola and the
+/// remaining placeholders.
 pub fn all(client: &Rc<Client>) -> Vec<adw::NavigationPage> {
     let mut pages = Vec::with_capacity(SECTIONS.len());
     for section in SECTIONS.iter() {
-        if section.id == "convert" {
-            pages.push(convert::page(client));
-        } else {
-            pages.push(placeholder(section));
+        match section.id {
+            "convert" => pages.push(convert::page(client)),
+            _ => pages.push(placeholder(section)),
         }
     }
     pages
 }
-
