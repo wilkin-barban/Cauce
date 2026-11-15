@@ -9,7 +9,7 @@ use cauce_core::{
 };
 use cauce_gui::i18n::{human_error, t, technical_details};
 use cauce_gui::pages::convert::state::{
-    ConvertState, expand_dropped_paths, plan_details, plan_headline,
+    ConvertState, base_name, expand_dropped_paths, plan_details, plan_headline, summarize,
 };
 use cauce_gui::pages::convert::view;
 use cauce_gui::pages::convert::view::Ui;
@@ -29,6 +29,13 @@ const FORBIDDEN: [&str; 3] = [
 
 /// Widget name of the drop card, so a test can find it without a handle.
 const DROP_CARD: &str = "drop-card";
+
+/// The real name that rendered as an empty row — the `&` opens a Pango entity
+/// the row never closes — and a hostile one with every markup character.
+const MARKUP_NAMES: [&str; 2] = [
+    "They Call Me Fáfnir | Cinematic Viking Neofolk | Female Vocals & Nordic Atmosphere.mp4",
+    "a <b>bold</b> \"quote\" 'apos' & nombre.mkv",
+];
 
 /// Something ran on the GTK thread: `None` means there was no display.
 type Outcome = Result<(), Box<dyn std::any::Any + Send + 'static>>;
@@ -620,5 +627,121 @@ fn the_selection_header_summary_and_row_removal_are_visible() {
     });
     if !ran {
         skip("the_selection_header_summary_and_row_removal_are_visible");
+    }
+}
+
+/// What the row actually paints: Pango reads title and subtitle as markup, so
+/// this is the text the user sees, and it fails when the markup is broken.
+fn rendered(markup: &str) -> String {
+    match gtk::pango::parse_markup(markup, '\0') {
+        Ok((_, text, _)) => text.to_string(),
+        Err(error) => panic!("el markup no parsea ({error}): {markup:?}"),
+    }
+}
+
+#[test]
+fn the_file_row_texts_escape_the_name_and_keep_it_whole() {
+    for name in MARKUP_NAMES {
+        let summary = "MP4 · 00:12 · 1920×1080 · h264 + aac";
+        let (title, subtitle) = view::file_row_texts(name, summary);
+
+        assert_eq!(
+            title,
+            gtk::glib::markup_escape_text(name),
+            "el título de la fila va escapado, nunca el nombre en crudo: {title:?}"
+        );
+        assert_eq!(
+            subtitle,
+            gtk::glib::markup_escape_text(summary),
+            "el subtítulo de la fila va escapado: {subtitle:?}"
+        );
+        assert!(!title.is_empty(), "el título no puede quedar vacío");
+        assert!(!subtitle.is_empty(), "el subtítulo no puede quedar vacío");
+        assert_eq!(
+            rendered(&title),
+            name,
+            "al desescapar vuelve el nombre exacto, con sus acentos y símbolos"
+        );
+        assert_eq!(rendered(&subtitle), summary, "y el resumen, intacto");
+    }
+
+    // El nombre real conserva su `&` como entidad, que es lo que rompía la fila.
+    let (title, _) = view::file_row_texts(MARKUP_NAMES[0], "");
+    assert!(
+        title.contains("&amp;"),
+        "el `&` sobrevive escapado: {title:?}"
+    );
+    // El nombre hostil escapa los cinco caracteres que Pango interpreta.
+    let (hostile, _) = view::file_row_texts(MARKUP_NAMES[1], "");
+    for entity in ["&lt;", "&gt;", "&quot;", "&apos;", "&amp;"] {
+        assert!(hostile.contains(entity), "falta {entity} en {hostile:?}");
+    }
+}
+
+#[test]
+fn the_rows_of_the_page_escape_what_the_user_brings() {
+    use cauce_gui::pages::convert::state::RejectedInput;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let ran = on_gtk_thread(|| {
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        // La fila aceptada: el nombre real y el hostil.
+        for name in MARKUP_NAMES {
+            let path = format!("/tmp/entrada/{name}");
+            let snapshot = sized_snapshot(&path, 1024);
+            let row = view::file_row(&snapshot, &remove);
+            let title = row.title();
+            let subtitle = row.subtitle().unwrap_or_default();
+            assert_eq!(
+                rendered(title.as_ref()),
+                base_name(&path),
+                "título de la fila: {title:?}"
+            );
+            assert_eq!(
+                rendered(subtitle.as_ref()),
+                summarize(&snapshot),
+                "subtítulo: {subtitle:?}"
+            );
+            assert!(
+                !rendered(title.as_ref()).is_empty(),
+                "la fila no queda vacía"
+            );
+        }
+
+        // La fila rechazada: el mismo nombre y el mensaje del daemon.
+        let rejected = RejectedInput {
+            path: format!("/tmp/entrada/{}", MARKUP_NAMES[1]),
+            message: "no se pudo leer <stream 0> & «codec»".to_owned(),
+        };
+        let row = view::rejected_row(&rejected);
+        assert_eq!(
+            rendered(row.title().as_ref()),
+            base_name(&rejected.path),
+            "el título de la fila rechazada va escapado"
+        );
+        assert_eq!(
+            rendered(row.subtitle().unwrap_or_default().as_ref()),
+            rejected.message,
+            "el mensaje del daemon va escapado"
+        );
+
+        // La carpeta de salida, que también elige el usuario.
+        let folder = "/home/wilkin/Vídeos & Música <final>";
+        let ui = Ui::build();
+        let mut state = ConvertState::new();
+        state.set_output_dir(Some(folder.to_owned()));
+        let state = Rc::new(RefCell::new(state));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let refresh = view::refresh(&ui, &state, &presets, &remove);
+        refresh();
+        assert_eq!(
+            rendered(ui.output_row.subtitle().unwrap_or_default().as_ref()),
+            folder,
+            "la carpeta de salida va escapada en su fila"
+        );
+    });
+    if !ran {
+        skip("the_rows_of_the_page_escape_what_the_user_brings");
     }
 }

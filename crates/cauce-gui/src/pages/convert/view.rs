@@ -427,8 +427,9 @@ fn ellipsize_labels(widget: &gtk::Widget, selected: &str) {
 pub fn file_row(snapshot: &MediaSnapshot, remove: &Rc<dyn Fn(String)>) -> adw::ActionRow {
     let row = adw::ActionRow::new();
     let name = base_name(&snapshot.path);
-    row.set_title(&name);
-    row.set_subtitle(&summarize(snapshot));
+    let (title, subtitle) = file_row_texts(&name, &summarize(snapshot));
+    row.set_title(&title);
+    row.set_subtitle(&subtitle);
 
     // One removal per row, by name, so the list explains itself without a
     // selection mode (`docs/ui-mvp.md` §4 and §10).
@@ -448,10 +449,19 @@ pub fn file_row(snapshot: &MediaSnapshot, remove: &Rc<dyn Fn(String)>) -> adw::A
 
 pub fn rejected_row(rejected: &RejectedInput) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&base_name(&rejected.path));
-    row.set_subtitle(&rejected.message);
+    let (title, subtitle) = file_row_texts(&base_name(&rejected.path), &rejected.message);
+    row.set_title(&title);
+    row.set_subtitle(&subtitle);
     row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
     row
+}
+
+/// The two texts of a file row, already escaped. `AdwActionRow` reads title and
+/// subtitle as Pango markup, so a name with `&`, `<`, `>` or a quote used to
+/// break the markup and render an empty row (`docs/ui-mvp.md` §4). Pure, so the
+/// regression is tested without a display.
+pub fn file_row_texts(name: &str, summary: &str) -> (String, String) {
+    (pages::escaped(name), pages::escaped(summary))
 }
 
 /// Renders the state into the widgets: lists, spinner, messages and the button.
@@ -511,8 +521,9 @@ pub fn refresh(
             Some(message) => pages::show_parts(&ui.failure, message, state.error_details()),
             None => pages::clear_failure(&ui.failure),
         }
-        ui.output_row
-            .set_subtitle(state.output_dir().unwrap_or(t("convert.not_chosen")));
+        ui.output_row.set_subtitle(&pages::escaped(
+            state.output_dir().unwrap_or(t("convert.not_chosen")),
+        ));
         // The ratified column of the current locale, never a catalog key.
         let preset = state.preset_id().and_then(|id| {
             presets
