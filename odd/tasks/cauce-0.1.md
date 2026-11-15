@@ -577,3 +577,13 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Corrección: la captura usa `ffmpeg -draw_mouse 0`. La captura nueva (`odd/cauce-g3.png`) ya no tiene el glifo.
 - Consecuencia: el cambio a `AdwComboRow` se mantiene porque simplifica la fila (el combo es la fila, sin `AdwActionRow` con sufijo) y su test garantiza que la página no mapea glifos prohibidos. **No era la causa** y así queda registrado, para no vender un arreglo que no lo fue.
 - Lección para la puerta G3: capturar con `-draw_mouse 0` desde el principio; el cursor del servidor X contamina la evidencia visual.
+
+**L35 (T20 · C-050) — `.deb` construido, instalado y con socket de usuario activo:**
+- RED: `Cargo.toml debe declarar [package.metadata.deb]` y `desktop-file-validate falló: packaging/cauce.desktop: file does not exist` (2 fallos).
+- GREEN: 2 tests de empaquetado; suite **257/257**. `appstreamcli validate` sin errores y `desktop-file-validate` en 0, ambos ejecutados de verdad.
+- Mecanismo: una sola tabla `[package.metadata.deb]` en `crates/cauce-daemon/Cargo.toml` (nombre `cauce`), con los binarios `target/release/cauce-{daemon,gui,cli}` como assets → `/usr/bin` 755, y `packaging/cauce.{socket,service}`, `cauce.desktop`, `io.github.wilkin.Cauce.metainfo.xml` e icono SVG propio → 644.
+- `Depends` exacto: `ffmpeg, libgtk-4-1, libadwaita-1-0, libnotify4, xdg-desktop-portal`, sin `$auto`. Un test rechaza `$auto` o extras.
+- Artefacto: `target/debian/cauce_0.1.0-1_amd64.deb` (1.7 MB). **No se publica**.
+- Verificación real en `ssh ubuntu`: `apt-get install --reinstall` del `.deb` → `ii cauce 0.1.0-1`; `/usr/bin/cauce-{daemon,gui,cli}` en 755; unidades en `/usr/lib/systemd/user/` en 644; `appstreamcli validate --no-net` OK (1 redundancia); `systemctl --user enable --now cauce.socket` → **active** con socket `srw-------` (0600) en `/run/user/1000/cauce/daemon.sock`.
+- Deuda anotada: la descripción corta del paquete hereda la del crate del daemon ("Cauce headless daemon…"), engañosa para un paquete de tres binarios; se corrige cuando `check-package` (T21) valide metadatos.
+- Corte: 154 (manifiesto + activos) · 375 (test de la puerta).
