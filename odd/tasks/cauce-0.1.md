@@ -416,3 +416,20 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Contradicción de docs detectada**: `architecture.md` §11 enumera 8 encoders CPU y omite `alac` y `pcm_s16le`, que `presets.md` exige para `system-audio-alac` y `system-audio-wav`. Se siguió `presets.md` (`REQUIRED_ENCODERS` = 10). Recomendación: actualizar §11; no lo edité por mi cuenta.
 - **Línea RED del ODD corregida**: T9 no emite `FFMPEG_FEATURE_MISSING`; `inspect` devuelve `Ok(Capabilities)` con `ffmpeg_missing`/`warnings` porque `architecture.md` §10 pide diagnóstico primero. El rechazo con `FFMPEG_FEATURE_MISSING` corresponde al arranque de un trabajo (T12/T13).
 - Decisión de implementación: `disk_free_bytes` vía `df -B1 --output=avail` con argv (sin shell); timeouts de 10 s por proceso con `spawn` + espera acotada, sin dependencias nuevas.
+
+**L16 (T10 · C-021) — RED, GREEN y un test flaky corregido de raíz:**
+- RED real: `E0432` por `cauce_ffmpeg::progress` y `cauce_ffmpeg::runner` inexistentes.
+- GREEN: 9 tests de parser + 10 de control de procesos; suite 120/120 al cerrar la unidad.
+- Implementación: grupo de procesos propio (`process_group(0)`), señales a `-pid` con `libc` (única dependencia nueva), `SIGSTOP`/`SIGCONT` para pausa, `SIGTERM`→`SIGKILL` con plazo, `Drop` mata y reap el grupo. Progreso desde `-progress pipe:1` con throttle de 2 Hz y bloque final siempre entregado. `out_time_ms` se interpreta como microsegundos (rareza documentada de FFmpeg).
+- **Test flaky detectado por el worker y corregido**: `pause_suspends_the_process_group` fallaba ~1 de 4 corridas con `ETXTBSY` ("Text file busy"). Causa real: los fakes se `exec`aban recién escritos y además compartían carpeta por PID entre tests paralelos. Corrección: carpeta única por test, publicación atómica del script (`rename`) y ejecución vía `/bin/sh <script>` (el `exec` va contra un binario estable). Verificado con **20 corridas seguidas, 0 fallos**, sin sleeps ni reintentos.
+- Corte: 285 (parser) + 171 (tests parser) + 333 (runner) + 397 (tests runner).
+
+**L17 (T11 · C-030) — RED, GREEN y decisiones de persistencia:**
+- RED real: `E0432` por `cauce_jobs::Store`, `MIGRATIONS`, `Migration` y `run_migrations` inexistentes.
+- GREEN: 5 tests de migraciones + 6 de persistencia; suite 131/131; fmt y clippy limpios.
+- **SQLite embebido** (`rusqlite` con `bundled`): el host local no tiene `libsqlite3-dev` y no quise exigir un `sudo apt install` ni atar el build a un paquete del sistema; el futuro `.deb` no dependerá de `libsqlite3-0`. Si preferís enlace contra el SQLite del sistema, es un cambio de una línea de Cargo más `libsqlite3-dev` en `Build-Depends`.
+- PRAGMAs observados: `journal_mode=wal`, `foreign_keys=1`, `busy_timeout=5000`, `synchronous=1`, `user_version=1`.
+- Backup previo a migrar con `VACUUM INTO` (no `cp` de un WAL vivo, como exige `data-model.md` §5); nombre `backups/cauce-v<old>-<UTC>.db`.
+- `insert_job` es una sola transacción (trabajo + reserva + evento); una colisión de destino no deja ni fila ni evento. Recuperación marca `probing|running|paused|validating` como `interrupted` con evento `recovery`, sin tocar `queued`.
+- Corte en 5 commits ≤400 autoradas: 394 (esquema + migraciones, con `Cargo.lock` de 242 líneas generadas) · 181 (store y ajustes) · 342 (codec + operaciones de trabajos) · 255 y 362 (tests).
+- **Pendiente de T12**: la prueba de "transición inválida rechazada sin escribir evento" y el rechazo con `FFMPEG_FEATURE_MISSING` al arrancar un trabajo (T9 solo diagnostica).
