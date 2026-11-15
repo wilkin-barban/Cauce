@@ -20,13 +20,11 @@ use libadwaita as adw;
 use serde_json::json;
 
 use crate::client::Client;
+use crate::i18n::t;
 use crate::pages::escaped;
 
 /// The command `docs/ui-mvp.md` §9 asks the page to offer when FFmpeg is absent.
 pub const FFMPEG_INSTALL: &str = "sudo apt install ffmpeg";
-
-/// Offline copy of the error page; never the same screen as an empty report.
-const OFFLINE: &str = "No se pudo conectar con el daemon.";
 
 /// Bytes in the unit a person reads: GiB and MiB with one decimal, else bytes.
 pub fn human_bytes(bytes: u64) -> String {
@@ -44,21 +42,37 @@ pub fn human_bytes(bytes: u64) -> String {
 /// a stable order, plus the gaps only when there are any.
 pub fn capabilities_report(caps: &Capabilities) -> String {
     let mut lines: Vec<String> = Vec::with_capacity(9);
-    lines.push(format!("FFmpeg: {}", or_unknown(&caps.ffmpeg_version)));
-    lines.push(format!("FFprobe: {}", or_unknown(&caps.ffprobe_version)));
-    lines.push(format!("Encoders: {}", caps.encoders.len()));
-    lines.push(format!("Filtros: {}", caps.filters.len()));
-    lines.push(format!("Núcleos de CPU: {}", caps.cpu_cores));
-    lines.push(format!(
-        "Disco libre: {}",
-        human_bytes(caps.disk_free_bytes)
-    ));
-    lines.push(format!("Daemon: {}", or_unknown(&caps.daemon_version)));
+    for (label, value) in [
+        (
+            "diagnostics.report_ffmpeg",
+            or_unknown(&caps.ffmpeg_version),
+        ),
+        (
+            "diagnostics.report_ffprobe",
+            or_unknown(&caps.ffprobe_version),
+        ),
+        (
+            "diagnostics.report_encoders",
+            caps.encoders.len().to_string(),
+        ),
+        ("diagnostics.report_filters", caps.filters.len().to_string()),
+        ("diagnostics.report_cpu_cores", caps.cpu_cores.to_string()),
+        (
+            "diagnostics.report_disk_free",
+            human_bytes(caps.disk_free_bytes),
+        ),
+        (
+            "diagnostics.report_daemon",
+            or_unknown(&caps.daemon_version),
+        ),
+    ] {
+        lines.push(format!("{}: {value}", t(label)));
+    }
     for missing in caps.ffmpeg_missing.iter() {
-        lines.push(format!("Falta {missing}"));
+        lines.push(t("diagnostics.report_missing").replace("{item}", missing));
     }
     for warning in caps.warnings.iter() {
-        lines.push(format!("Aviso: {warning}"));
+        lines.push(t("diagnostics.report_warning").replace("{warning}", warning));
     }
     let mut report = lines.join("\n");
     report.push('\n');
@@ -67,7 +81,7 @@ pub fn capabilities_report(caps: &Capabilities) -> String {
 
 fn or_unknown(value: &str) -> String {
     match value.is_empty() {
-        true => "desconocida".to_owned(),
+        true => t("diagnostics.report_unknown").to_owned(),
         false => value.to_owned(),
     }
 }
@@ -99,7 +113,7 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(&text);
         }
-        button.set_label("Informe copiado");
+        button.set_label(t("diagnostics.copied"));
     });
 
     load(client, &ui);
@@ -107,26 +121,29 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
 }
 
 fn build() -> Ui {
-    let refresh = gtk::Button::with_label("Actualizar");
+    let refresh = gtk::Button::with_label(t("diagnostics.refresh"));
     refresh.add_css_class("flat");
-    let copy = gtk::Button::with_label("Copiar informe");
+    let copy = gtk::Button::with_label(t("diagnostics.copy_report"));
     copy.add_css_class("suggested-action");
 
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new("Diagnóstico", "")));
+    header.set_title_widget(Some(&adw::WindowTitle::new(
+        t("section.diagnostics_title"),
+        "",
+    )));
     header.pack_start(&refresh);
     header.pack_end(&copy);
 
     let loading = adw::StatusPage::new();
     loading.set_icon_name(Some("utilities-system-monitor-symbolic"));
-    loading.set_title("Revisando el entorno");
-    loading.set_description(Some("Consultando las capacidades del daemon…"));
+    loading.set_title(t("diagnostics.loading_title"));
+    loading.set_description(Some(t("diagnostics.loading_description")));
 
     let error = adw::StatusPage::new();
     error.set_icon_name(Some("dialog-warning-symbolic"));
-    error.set_title("No se pudo leer el diagnóstico");
-    error.set_description(Some(OFFLINE));
-    let retry = gtk::Button::with_label("Reintentar");
+    error.set_title(t("diagnostics.error_title"));
+    error.set_description(Some(t("diagnostics.offline")));
+    let retry = gtk::Button::with_label(t("diagnostics.retry"));
     retry.add_css_class("pill");
     error.set_child(Some(&retry));
 
@@ -139,7 +156,7 @@ fn build() -> Ui {
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&stack));
 
-    let page = adw::NavigationPage::new(&toolbar, "Diagnóstico");
+    let page = adw::NavigationPage::new(&toolbar, t("section.diagnostics_title"));
     page.set_tag(Some("diagnostics"));
 
     Ui {
@@ -162,7 +179,10 @@ fn load(client: &Rc<Client>, ui: &Ui) {
             Ok(value) => match serde_json::from_value::<Capabilities>(value) {
                 Ok(caps) => caps,
                 Err(error) => {
-                    fail(&ui, &format!("El diagnóstico llegó ilegible: {error}"));
+                    fail(
+                        &ui,
+                        &t("diagnostics.unreadable").replace("{error}", &error.to_string()),
+                    );
                     return;
                 }
             },
@@ -203,62 +223,64 @@ fn render(ui: &Ui, caps: &Capabilities) {
 
 fn tools_group(caps: &Capabilities) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
-    group.set_title("Herramientas");
-    group.set_description(Some(
-        "Cauce usa el FFmpeg del sistema: no embebe ningún binario.",
-    ));
-    group.add(&row("FFmpeg", &or_unknown(&caps.ffmpeg_version)));
-    group.add(&row("FFprobe", &or_unknown(&caps.ffprobe_version)));
+    group.set_title(t("diagnostics.group_tools"));
+    group.set_description(Some(t("diagnostics.tools_description")));
     group.add(&row(
-        "Encoders",
-        &format!("{} reportados por FFmpeg", caps.encoders.len()),
+        t("diagnostics.report_ffmpeg"),
+        &or_unknown(&caps.ffmpeg_version),
     ));
     group.add(&row(
-        "Filtros",
-        &format!("{} reportados por FFmpeg", caps.filters.len()),
+        t("diagnostics.report_ffprobe"),
+        &or_unknown(&caps.ffprobe_version),
+    ));
+    group.add(&row(
+        t("diagnostics.report_encoders"),
+        &t("diagnostics.encoders_count").replace("{n}", &caps.encoders.len().to_string()),
+    ));
+    group.add(&row(
+        t("diagnostics.report_filters"),
+        &t("diagnostics.filters_count").replace("{n}", &caps.filters.len().to_string()),
     ));
     group
 }
 
 fn machine_group(caps: &Capabilities) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
-    group.set_title("Equipo y daemon");
+    group.set_title(t("diagnostics.group_machine"));
     group.add(&row(
-        "Núcleos de CPU",
-        &format!("{} disponibles", caps.cpu_cores),
+        t("diagnostics.report_cpu_cores"),
+        &t("diagnostics.cpu_available").replace("{n}", &caps.cpu_cores.to_string()),
     ));
     group.add(&row(
-        "Espacio libre",
-        &format!(
-            "{} en la carpeta de salida",
-            human_bytes(caps.disk_free_bytes)
-        ),
+        t("diagnostics.report_disk_free"),
+        &t("diagnostics.disk_available").replace("{size}", &human_bytes(caps.disk_free_bytes)),
     ));
-    group.add(&row("Daemon", &or_unknown(&caps.daemon_version)));
+    group.add(&row(
+        t("diagnostics.report_daemon"),
+        &or_unknown(&caps.daemon_version),
+    ));
     group
 }
 
 /// Every missing item is named, with the one command that fixes all of them.
 fn missing_group(caps: &Capabilities) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
-    group.set_title("Falta instalar");
-    group.set_description(Some(
-        "Estos encoders y filtros son obligatorios para los presets del sistema.",
-    ));
+    group.set_title(t("diagnostics.group_missing"));
+    group.set_description(Some(t("diagnostics.missing_description")));
     for item in caps.ffmpeg_missing.iter() {
-        group.add(&row(item, "Obligatorio para los presets del sistema"));
+        group.add(&row(item, t("diagnostics.required")));
     }
 
     let command = adw::ActionRow::new();
-    command.set_title("Instalación");
+    command.set_title(t("diagnostics.install"));
     command.set_subtitle(FFMPEG_INSTALL);
-    let copy = gtk::Button::with_label("Copiar comando");
+    let copy = gtk::Button::with_label(t("diagnostics.copy_command"));
     copy.add_css_class("flat");
     copy.connect_clicked(|button| {
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(FFMPEG_INSTALL);
         }
-        button.set_label("Comando copiado");
+        button.set_label(t("diagnostics.command_copied"));
     });
     command.add_suffix(&copy);
     group.add(&command);
@@ -267,7 +289,7 @@ fn missing_group(caps: &Capabilities) -> adw::PreferencesGroup {
 
 fn warnings_group(caps: &Capabilities) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
-    group.set_title("Avisos");
+    group.set_title(t("diagnostics.group_warnings"));
     for warning in caps.warnings.iter() {
         group.add(&row(warning, ""));
     }

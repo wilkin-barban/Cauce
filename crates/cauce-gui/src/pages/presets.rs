@@ -19,11 +19,15 @@ use std::rc::Rc;
 use adw::glib;
 use adw::gtk;
 use adw::prelude::*;
-use cauce_core::{HdrPolicy, Preset, SubtitlePolicy};
+use cauce_core::Preset;
 use libadwaita as adw;
 use serde_json::json;
 
 use crate::client::Client;
+use crate::i18n::{
+    codec_label, hdr_label, localized_preset_description, localized_preset_name, resolution,
+    subtitle_label, t, yes_no,
+};
 use crate::pages::escaped;
 
 /// Documented group order: Smart TV, Web y redes, Archivo, Audio. Any other
@@ -31,15 +35,15 @@ use crate::pages::escaped;
 pub const CATEGORIES: [&str; 4] = ["tv", "social", "archive", "audio"];
 
 /// Read-only notice, the only action the page does not offer.
-const READ_ONLY: &str = "El catálogo del sistema no se puede editar ni borrar en v0.1.";
+const READ_ONLY: &str = "presets.read_only";
 
-/// Spanish header of one category; an unknown category keeps its own key.
+/// Header of one category; an unknown category keeps its own name.
 pub fn category_label(category: &str) -> String {
     match category {
-        "tv" => "Smart TV".to_owned(),
-        "social" => "Web y redes".to_owned(),
-        "archive" => "Archivo y optimización".to_owned(),
-        "audio" => "Audio y música".to_owned(),
+        "tv" => t("presets.group_tv").to_owned(),
+        "social" => t("presets.group_social").to_owned(),
+        "archive" => t("presets.group_archive").to_owned(),
+        "audio" => t("presets.group_audio").to_owned(),
         other => other.to_owned(),
     }
 }
@@ -69,63 +73,65 @@ pub fn group_presets(presets: &[Preset]) -> Vec<(String, Vec<&Preset>)> {
 }
 
 /// Label/value rows of the detail pane. A field that the preset leaves unset
-/// produces no row at all, so nothing is ever shown as an empty value.
+/// produces no row at all, so nothing is ever shown as an empty value. The label
+/// is a catalog key: the row says whatever the current locale says.
 pub fn preset_detail(preset: &Preset) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = Vec::with_capacity(13);
-    let mut push = |label: &str, value: String| rows.push((label.to_owned(), value));
+    let mut push = |key: &'static str, value: String| rows.push((t(key).to_owned(), value));
 
-    push("Nombre", preset.name_es.clone());
-    push("Descripción", preset.description_es.clone());
-    push("Contenedor", preset.container.clone());
-    push("Códec de video", codec_label(&preset.video_codec));
-    push("Códec de audio", preset.audio_codec.clone());
+    push(
+        "presets.detail_name",
+        localized_preset_name(preset).to_owned(),
+    );
+    push(
+        "presets.detail_description",
+        localized_preset_description(preset).to_owned(),
+    );
+    push("presets.detail_container", preset.container.clone());
+    push(
+        "presets.detail_video_codec",
+        codec_label(&preset.video_codec),
+    );
+    push("presets.detail_audio_codec", preset.audio_codec.clone());
     if let Some(crf) = preset.video_quality {
-        push("Calidad (CRF)", crf.to_string());
+        push("presets.detail_quality", crf.to_string());
     }
     if let Some(bitrate) = preset.audio_bitrate.as_ref() {
-        push("Bitrate de audio", bitrate.clone());
+        push("presets.detail_audio_bitrate", bitrate.clone());
     }
     if let Some(resolution) = resolution(preset.max_width, preset.max_height) {
-        push("Resolución máxima", resolution);
+        push("presets.detail_resolution", resolution);
     }
     if let Some(fps) = preset.max_fps {
-        push("FPS máximos", fps_label(fps));
+        push("presets.detail_fps", fps_label(fps));
     }
     if let Some(bits) = preset.max_bit_depth {
-        push("Profundidad de bits", format!("{bits} bits"));
+        push(
+            "presets.detail_bit_depth",
+            t("presets.value_bits").replace("{n}", &bits.to_string()),
+        );
     }
-    push("HDR", hdr_label(preset.hdr_policy).to_owned());
     push(
-        "Subtítulos",
+        "presets.detail_hdr",
+        hdr_label(preset.hdr_policy).to_owned(),
+    );
+    push(
+        "presets.detail_subtitles",
         subtitle_label(preset.subtitle_policy).to_owned(),
     );
-    push("Faststart", yes_no(preset.faststart).to_owned());
     push(
-        "Metadatos",
+        "presets.detail_faststart",
+        yes_no(preset.faststart).to_owned(),
+    );
+    push(
+        "presets.detail_metadata",
         match preset.preserve_metadata {
-            true => "Conserva los metadatos".to_owned(),
-            false => "No conserva los metadatos".to_owned(),
+            true => t("presets.value_metadata_kept").to_owned(),
+            false => t("presets.value_metadata_dropped").to_owned(),
         },
     );
 
     rows
-}
-
-/// `none` is a real value of `video_codec`: it means the preset removes video.
-fn codec_label(codec: &str) -> String {
-    match codec {
-        "none" => "Sin pista de video".to_owned(),
-        other => other.to_owned(),
-    }
-}
-
-fn resolution(width: Option<u32>, height: Option<u32>) -> Option<String> {
-    match (width, height) {
-        (Some(width), Some(height)) => Some(format!("{width}×{height}")),
-        (Some(width), None) => Some(format!("Hasta {width} px de ancho")),
-        (None, Some(height)) => Some(format!("Hasta {height} px de alto")),
-        (None, None) => None,
-    }
 }
 
 /// Whole frame rates read as `60`, fractional ones keep their decimals.
@@ -133,29 +139,6 @@ fn fps_label(fps: f64) -> String {
     match fps.fract() == 0.0 {
         true => format!("{fps:.0}"),
         false => format!("{fps}"),
-    }
-}
-
-fn yes_no(value: bool) -> &'static str {
-    match value {
-        true => "Sí",
-        false => "No",
-    }
-}
-
-fn hdr_label(policy: HdrPolicy) -> &'static str {
-    match policy {
-        HdrPolicy::Preserve => "Conserva el HDR de la fuente",
-        HdrPolicy::ToneMapSdr => "Convierte HDR a SDR",
-    }
-}
-
-fn subtitle_label(policy: SubtitlePolicy) -> &'static str {
-    match policy {
-        SubtitlePolicy::PreserveCompatible => "Conserva las pistas compatibles",
-        SubtitlePolicy::ConvertCompatible => "Convierte las pistas al formato del contenedor",
-        SubtitlePolicy::Remove => "Quita los subtítulos",
-        SubtitlePolicy::BurnIn => "Incrusta los subtítulos en la imagen",
     }
 }
 
@@ -207,19 +190,19 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
 fn build() -> Ui {
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&adw::WindowTitle::new(
-        "Presets",
-        "Solo lectura en v0.1",
+        t("section.presets_title"),
+        t("presets.subtitle"),
     )));
 
     let loading = adw::StatusPage::new();
     loading.set_icon_name(Some("starred-symbolic"));
-    loading.set_title("Cargando presets");
-    loading.set_description(Some("Leyendo el catálogo del daemon…"));
+    loading.set_title(t("presets.loading_title"));
+    loading.set_description(Some(t("presets.loading_description")));
 
     let error = adw::StatusPage::new();
     error.set_icon_name(Some("dialog-warning-symbolic"));
-    error.set_title("No se pudo leer el catálogo");
-    let retry = gtk::Button::with_label("Reintentar");
+    error.set_title(t("presets.error_title"));
+    let retry = gtk::Button::with_label(t("presets.retry"));
     retry.add_css_class("pill");
     error.set_child(Some(&retry));
 
@@ -239,7 +222,7 @@ fn build() -> Ui {
     detail_list.add_css_class("boxed-list");
     detail_list.set_selection_mode(gtk::SelectionMode::None);
 
-    let notice = gtk::Label::new(Some(READ_ONLY));
+    let notice = gtk::Label::new(Some(t(READ_ONLY)));
     notice.add_css_class("caption");
     notice.add_css_class("dim-label");
     notice.set_xalign(0.0);
@@ -271,7 +254,7 @@ fn build() -> Ui {
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&stack));
 
-    let page = adw::NavigationPage::new(&toolbar, "Presets");
+    let page = adw::NavigationPage::new(&toolbar, t("section.presets_title"));
     page.set_tag(Some("presets"));
     Ui {
         page,
@@ -302,7 +285,10 @@ fn load(client: &Rc<Client>, ui: &Ui, presets: &Rc<RefCell<Vec<Preset>>>) {
             Ok(value) => match serde_json::from_value::<Vec<Preset>>(value) {
                 Ok(list) => list,
                 Err(error) => {
-                    fail(&ui, &format!("El catálogo llegó ilegible: {error}"));
+                    fail(
+                        &ui,
+                        &t("presets.unreadable").replace("{error}", &error.to_string()),
+                    );
                     return;
                 }
             },
@@ -362,7 +348,7 @@ fn header_row(category: &str) -> gtk::ListBoxRow {
 
 fn preset_row(preset: &Preset) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&escaped(&preset.name_es));
+    row.set_title(&escaped(localized_preset_name(preset)));
     row.set_subtitle(&escaped(&format!(
         "{} · {}",
         preset.container.to_uppercase(),
@@ -376,14 +362,15 @@ fn preset_row(preset: &Preset) -> adw::ActionRow {
 
 fn codec_summary(preset: &Preset) -> String {
     match preset.video_codec.as_str() {
-        "none" => format!("solo audio {}", preset.audio_codec),
+        "none" => t("presets.value_audio_only").replace("{codec}", &preset.audio_codec),
         video => format!("{video} + {}", preset.audio_codec),
     }
 }
 
 fn show_detail(ui: &Ui, preset: &Preset) {
-    ui.title.set_label(&preset.name_es);
-    ui.description.set_label(&preset.description_es);
+    ui.title.set_label(localized_preset_name(preset));
+    ui.description
+        .set_label(localized_preset_description(preset));
     while let Some(child) = ui.detail_list.first_child() {
         ui.detail_list.remove(&child);
     }

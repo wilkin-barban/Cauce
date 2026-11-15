@@ -36,6 +36,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
 
+use crate::i18n::t;
+
 /// How long one request may stay unanswered before the connection is dropped.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -169,9 +171,8 @@ impl Drop for Connection {
     /// the pending map dead, so no late reply or notification survives the drop.
     fn drop(&mut self) {
         self.pending.stop_reader();
-        self.pending.fail_all(&daemon_unavailable(
-            "Se descartó la conexión con el daemon. Reintentando en el próximo intento.",
-        ));
+        self.pending
+            .fail_all(&daemon_unavailable(t("client.discarded")));
     }
 }
 
@@ -188,10 +189,11 @@ impl Connection {
         let stream = match tokio::time::timeout_at(deadline, UnixStream::connect(&socket)).await {
             Ok(Ok(stream)) => stream,
             Ok(Err(error)) => {
-                return Err(daemon_unavailable(&format!(
-                    "No se pudo conectar con el daemon en `{}`: {error}. Verificá que el servicio esté activo.",
-                    socket.display()
-                )));
+                return Err(daemon_unavailable(
+                    &t("client.connect_failed")
+                        .replace("{socket}", &socket.display().to_string())
+                        .replace("{error}", &error.to_string()),
+                ));
             }
             Err(_) => return Err(stalled_open()),
         };
@@ -231,7 +233,7 @@ impl Connection {
         let mut line = serde_json::to_string(&envelope).map_err(|error| {
             JobError::new(
                 ErrorCode::InvalidInput,
-                format!("La petición no se pudo serializar: {error}"),
+                t("client.serialize_failed").replace("{error}", &error.to_string()),
                 false,
             )
         })?;
@@ -259,9 +261,7 @@ impl Connection {
                 // A hung daemon must not keep the socket, the read task and the fd
                 // alive until the next request (review finding R3-001).
                 pending.close_connection();
-                let error = daemon_unavailable(
-                    "El daemon no respondió a tiempo. Se descartó la conexión; probá de nuevo.",
-                );
+                let error = daemon_unavailable(t("client.request_timeout"));
                 let _ = reply.try_send(Err(error));
             }
         });
@@ -295,21 +295,9 @@ async fn read_loop(
                 };
                 let _ = reply.try_send(parse_response(&message));
             }
-            Ok(None) => {
-                break daemon_unavailable(
-                    "Se perdió la conexión con el daemon. Reconectando en el próximo intento.",
-                );
-            }
-            Err(LineError::TooLong) => {
-                break daemon_unavailable(
-                    "El daemon envió una línea de más de 1 MiB y se cerró la conexión. Probá de nuevo.",
-                );
-            }
-            Err(LineError::Io) => {
-                break daemon_unavailable(
-                    "Se perdió la conexión con el daemon. Reconectando en el próximo intento.",
-                );
-            }
+            Ok(None) => break daemon_unavailable(t("client.lost")),
+            Err(LineError::TooLong) => break daemon_unavailable(t("client.oversized_line")),
+            Err(LineError::Io) => break daemon_unavailable(t("client.lost")),
         }
     };
     // Client-side only: this event is never written to the daemon and does not
@@ -426,7 +414,7 @@ fn parse_response(message: &Value) -> Result<Value, JobError> {
         let text = error
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("El daemon devolvió un error sin mensaje.")
+            .unwrap_or(t("client.error_without_message"))
             .to_owned();
         let retryable = error
             .get("data")
@@ -457,16 +445,12 @@ pub fn socket_path() -> Result<PathBuf, JobError> {
 
 /// The refusal that replaces the old temp-dir fallback.
 fn missing_runtime_dir() -> JobError {
-    daemon_unavailable(
-        "XDG_RUNTIME_DIR no está definido como ruta absoluta, así que el cliente no puede saber dónde está el socket del daemon. Definí XDG_RUNTIME_DIR con una ruta absoluta (por ejemplo `/run/user/1000`) y reintentá.",
-    )
+    daemon_unavailable(t("client.no_runtime_dir"))
 }
 
 /// One deadline covers socket open, write and flush (review finding R4-001).
 fn stalled_open() -> JobError {
-    daemon_unavailable(
-        "El daemon no respondió a tiempo al abrir la conexión. Se descartó la conexión; probá de nuevo.",
-    )
+    daemon_unavailable(t("client.open_timeout"))
 }
 
 fn daemon_unavailable(message: &str) -> JobError {
@@ -474,9 +458,7 @@ fn daemon_unavailable(message: &str) -> JobError {
 }
 
 fn unavailable_with_io(error: &std::io::Error) -> JobError {
-    daemon_unavailable(&format!(
-        "No se pudo hablar con el daemon: {error}. Se reintentará en el próximo intento."
-    ))
+    daemon_unavailable(&t("client.talk_failed").replace("{error}", &error.to_string()))
 }
 
 /// A cheap handle to the daemon: one runtime, one request queue, many listeners.
@@ -534,15 +516,11 @@ impl Client {
             reply,
         };
         if self.requests.send(request).await.is_err() {
-            return Err(daemon_unavailable(
-                "El cliente del daemon no está disponible. Reiniciá Cauce.",
-            ));
+            return Err(daemon_unavailable(t("client.worker_unavailable")));
         }
         match answer.recv().await {
             Ok(result) => result,
-            Err(_) => Err(daemon_unavailable(
-                "El daemon cerró la conexión sin responder. Probá de nuevo.",
-            )),
+            Err(_) => Err(daemon_unavailable(t("client.closed_without_answer"))),
         }
     }
 
