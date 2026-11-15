@@ -659,3 +659,11 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Lo que falló**: `jobs=0` tras los tres intentos de CTA (y=509, 470, 545) y las capturas 02/03/04 salieron con tamaños incompatibles (02 < 03 ≈ 04), o sea que la sección no cambió. **Diagnóstico**: el `GtkFileDialog` de "Añadir archivos" **no cierra** con `Ctrl+L` + `type` + `Return` bajo Xvfb+openbox, así que todo clic posterior cae sobre el modal y nunca se llega a la CTA real; sin trabajo creado, "Cola con trabajo" no existe.
 - **Decisión**: se commitearon solo las dos capturas válidas (`01` y `06`) y se conservaron las anteriores de Cola, Presets, Ajustes y Diagnóstico **marcadas como previas a las correcciones**. No se commiteó ninguna captura no verificada ni se siguió iterando.
 - Camino para cerrar esto (no ejecutado por presupuesto): seleccionar el archivo **sin diálogo**, arrastrando el fixture con `xdotool` sobre la drop zone (DnD real), que además prueba la ruta que el diálogo no ejercita; o sembrar el trabajo por IPC justo antes de abrir la sección Cola y capturarla — el resto de secciones ya se alcanza con clics verificados.
+
+**L46 (corrida determinista final) — Cola con trabajo real y Presets verificados:**
+- Trabajo sembrado **por IPC** (determinista, sin diálogo): `jobs.add` con `system-smarttv-compat` → `queued` → `completed`. La página Cola se capturó con ese trabajo real.
+- **`02-cola.png`** (1440×900, recortado al rectángulo de la app): trabajo en estado final. **`03-presets.png`**: catálogo.
+- Se verificó cada sección con `cmp -s` contra el frame previo y un reintento único.
+- **Invalidado y no commiteado**: `04-ajustes` salió byte-casi-idéntico a `03-presets` (112 353 vs 112 350) y `05-diagnostico` repitió el tamaño de la corrida anterior; ninguno prueba su sección. Se conservan las versiones previas de ambas, marcadas como anteriores a las correcciones.
+- **Drag & drop descartado**: `xdotool` no puede iniciar un XDND desde un gestor de archivos que no está corriendo; sin una ventana origen no hay arrastre posible. "Convertir con archivo" queda sin evidencia visual.
+- Nota sobre el arreglo 3: la base persiste `percent=96` para el trabajo completado, pero la **vista** debe pintar 100 % y "Completada"; la captura de Cola es la que debe confirmarlo y no se midió el píxel por presupuesto de contexto.
