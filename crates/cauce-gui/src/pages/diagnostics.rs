@@ -15,13 +15,13 @@ use std::rc::Rc;
 use adw::glib;
 use adw::gtk;
 use adw::prelude::*;
-use cauce_core::Capabilities;
+use cauce_core::{Capabilities, JobError};
 use libadwaita as adw;
 use serde_json::json;
 
 use crate::client::Client;
-use crate::i18n::t;
-use crate::pages::escaped;
+use crate::i18n::{human_error, t, technical_details};
+use crate::pages::{error_details_label, escaped};
 
 /// The command `docs/ui-mvp.md` §9 asks the page to offer when FFmpeg is absent.
 pub const FFMPEG_INSTALL: &str = "sudo apt install ffmpeg";
@@ -92,6 +92,8 @@ struct Ui {
     page: adw::NavigationPage,
     stack: gtk::Stack,
     error: adw::StatusPage,
+    error_expander: gtk::Expander,
+    error_details: gtk::Label,
     retry: gtk::Button,
     refresh: gtk::Button,
     copy: gtk::Button,
@@ -142,13 +144,23 @@ fn build() -> Ui {
     loading.set_title(t("diagnostics.loading_title"));
     loading.set_description(Some(t("diagnostics.loading_description")));
 
+    // The page says what happened in one sentence; the code and the daemon's
+    // message wait behind the closed disclosure (`docs/contracts.md` §8).
     let error = adw::StatusPage::new();
     error.set_icon_name(Some("dialog-warning-symbolic"));
     error.set_title(t("diagnostics.error_title"));
     error.set_description(Some(t("diagnostics.offline")));
     let retry = gtk::Button::with_label(t("diagnostics.retry"));
     retry.add_css_class("pill");
-    error.set_child(Some(&retry));
+    let error_details = error_details_label();
+    let error_expander = gtk::Expander::new(Some(t("error.technical_details")));
+    error_expander.set_expanded(false);
+    error_expander.set_child(Some(&error_details));
+    let error_body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    error_body.set_halign(gtk::Align::Center);
+    error_body.append(&error_expander);
+    error_body.append(&retry);
+    error.set_child(Some(&error_body));
 
     let stack = gtk::Stack::new();
     stack.add_named(&loading, Some("loading"));
@@ -166,6 +178,8 @@ fn build() -> Ui {
         page,
         stack,
         error,
+        error_expander,
+        error_details,
         retry,
         refresh,
         copy,
@@ -182,15 +196,14 @@ fn load(client: &Rc<Client>, ui: &Ui) {
             Ok(value) => match serde_json::from_value::<Capabilities>(value) {
                 Ok(caps) => caps,
                 Err(error) => {
-                    fail(
-                        &ui,
-                        &t("diagnostics.unreadable").replace("{error}", &error.to_string()),
-                    );
+                    let message =
+                        t("diagnostics.unreadable").replace("{error}", &error.to_string());
+                    fail_message(&ui, &message);
                     return;
                 }
             },
             Err(error) => {
-                fail(&ui, &error.message);
+                fail(&ui, &error);
                 return;
             }
         };
@@ -198,8 +211,23 @@ fn load(client: &Rc<Client>, ui: &Ui) {
     });
 }
 
-fn fail(ui: &Ui, message: &str) {
+/// A daemon failure: the human sentence is the visible description and the raw
+/// text waits inside the disclosure.
+fn fail(ui: &Ui, error: &JobError) {
+    ui.error
+        .set_description(Some(&human_error(error.code, &error.message)));
+    ui.error_details
+        .set_label(&technical_details(error.code, &error.message));
+    ui.error_expander.set_visible(true);
+    ui.error_expander.set_expanded(false);
+    ui.stack.set_visible_child_name("error");
+}
+
+/// A sentence Cauce already wrote, with no technical part.
+fn fail_message(ui: &Ui, message: &str) {
     ui.error.set_description(Some(message));
+    ui.error_details.set_label("");
+    ui.error_expander.set_visible(false);
     ui.stack.set_visible_child_name("error");
 }
 

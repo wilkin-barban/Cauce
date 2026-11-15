@@ -18,7 +18,7 @@ use std::rc::Rc;
 use adw::glib;
 use adw::gtk;
 use adw::prelude::*;
-use cauce_core::Settings;
+use cauce_core::{JobError, Settings};
 use libadwaita as adw;
 use serde_json::json;
 
@@ -29,7 +29,7 @@ use super::{
 };
 use crate::client::Client;
 use crate::i18n::t;
-use crate::pages::escaped;
+use crate::pages::{self, ErrorSurface, error_surface, escaped};
 
 /// Every widget the page needs after construction.
 #[derive(Clone)]
@@ -37,6 +37,9 @@ struct Ui {
     page: adw::NavigationPage,
     stack: gtk::Stack,
     error: adw::StatusPage,
+    error_expander: gtk::Expander,
+    error_details: gtk::Label,
+    failure: ErrorSurface,
     retry: gtk::Button,
     banner: adw::Banner,
     output: adw::ActionRow,
@@ -151,13 +154,27 @@ fn build() -> Ui {
     let loading = adw::StatusPage::new();
     loading.set_icon_name(Some("preferences-system-symbolic"));
     loading.set_title(t("settings.loading"));
+    // The configuration page says what happened in one sentence and keeps the
+    // code plus the daemon's message behind the closed disclosure (§8).
     let error = adw::StatusPage::new();
     error.set_icon_name(Some("dialog-warning-symbolic"));
     error.set_title(t("settings.error_title"));
     error.set_description(Some(t("settings.offline")));
     let retry = gtk::Button::with_label(t("settings.retry"));
     retry.add_css_class("pill");
-    error.set_child(Some(&retry));
+    let error_details = pages::error_details_label();
+    let error_expander = gtk::Expander::new(Some(t("error.technical_details")));
+    error_expander.set_expanded(false);
+    error_expander.set_child(Some(&error_details));
+    let error_body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    error_body.set_halign(gtk::Align::Center);
+    error_body.append(&error_expander);
+    error_body.append(&retry);
+    error.set_child(Some(&error_body));
+
+    // A failed write does not replace the whole page: one line and a closed
+    // disclosure above the preferences.
+    let failure = error_surface("settings-failure");
 
     let output = adw::ActionRow::new();
     output.set_title(t("settings.output_folder"));
@@ -204,10 +221,14 @@ fn build() -> Ui {
     stack.add_named(&preferences, Some("ready"));
     stack.set_visible_child_name("loading");
 
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    body.append(&failure.area);
+    body.append(&stack);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
-    toolbar.set_content(Some(&stack));
+    toolbar.set_content(Some(&body));
 
     let page = adw::NavigationPage::new(&toolbar, t("section.settings_title"));
     page.set_tag(Some("settings"));
@@ -215,6 +236,9 @@ fn build() -> Ui {
         page,
         stack,
         error,
+        error_expander,
+        error_details,
+        failure,
         retry,
         banner,
         output,
@@ -270,13 +294,11 @@ fn load(
             Ok(settings) => {
                 *current.borrow_mut() = Some(settings.clone());
                 render(&ui, &settings, &guard);
+                pages::clear_failure(&ui.failure);
                 show_error(&ui, "");
                 ui.stack.set_visible_child_name("ready");
             }
-            Err(error) => {
-                ui.error.set_description(Some(&error.message));
-                ui.stack.set_visible_child_name("error");
-            }
+            Err(error) => show_load_failure(&ui, &error),
         }
     });
 }
@@ -323,13 +345,14 @@ fn build_commit(
                     crate::pages::set_output_dir(&saved.output_dir);
                     *current.borrow_mut() = Some(saved.clone());
                     render(&ui, &saved, &guard);
+                    pages::clear_failure(&ui.failure);
                     show_error(&ui, "");
                 }
                 Err(error) => {
                     if let Some(base) = current.borrow().clone() {
                         render(&ui, &base, &guard);
                     }
-                    show_error(&ui, &error.message);
+                    show_write_failure(&ui, &error);
                 }
             }
         });
@@ -366,6 +389,27 @@ fn show_error(ui: &Ui, message: &str) {
     }
     ui.banner.set_title(message);
     ui.banner.set_revealed(true);
+}
+
+/// `settings.get` failed: the page shows the human sentence and hides the code
+/// and the daemon's message behind the disclosure.
+fn show_load_failure(ui: &Ui, error: &JobError) {
+    ui.error
+        .set_description(Some(&crate::i18n::human_error(error.code, &error.message)));
+    ui.error_details
+        .set_label(&crate::i18n::technical_details(error.code, &error.message));
+    ui.error_expander.set_visible(true);
+    ui.error_expander.set_expanded(false);
+    ui.stack.set_visible_child_name("error");
+}
+
+/// `settings.set` failed: the preferences stay in place and the human sentence
+/// replaces the banner, with the raw text one click away.
+fn show_write_failure(ui: &Ui, error: &JobError) {
+    ui.banner
+        .set_title(&crate::i18n::human_error(error.code, &error.message));
+    ui.banner.set_revealed(true);
+    pages::show_failure(&ui.failure, error);
 }
 
 /// Follows the folder Convertir chooses, without a second `settings.get`.

@@ -2,11 +2,13 @@
 //! the enabled button, the single queue request and the folder expansion are all
 //! tested without a display (`docs/ui-mvp.md` §4, `docs/contracts.md` §6).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use cauce_core::{Capabilities, ConversionPlan, MediaSnapshot, StreamAction, SubtitleAction};
+use cauce_core::{
+    Capabilities, ConversionPlan, JobError, MediaSnapshot, StreamAction, SubtitleAction,
+};
 
-use crate::i18n::t;
+use crate::i18n::{human_error, t, technical_details};
 
 /// The action that unblocks a machine without FFmpeg (`docs/ui-mvp.md` §9).
 pub const FFMPEG_COMMAND: &str = "sudo apt install ffmpeg";
@@ -45,6 +47,7 @@ pub struct ConvertState {
     output_dir: Option<String>,
     preset_id: Option<String>,
     error: Option<String>,
+    error_details: Option<String>,
     blocking: Option<String>,
     queued: bool,
 }
@@ -94,6 +97,10 @@ impl ConvertState {
     }
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+    /// The code and the daemon's message, for the collapsed disclosure only.
+    pub fn error_details(&self) -> Option<&str> {
+        self.error_details.as_deref()
     }
     /// The message of a hard block, such as a missing FFmpeg.
     pub fn blocking(&self) -> Option<&str> {
@@ -156,9 +163,22 @@ impl ConvertState {
     }
 
     /// Surfaces a concrete failure inside the page (`docs/ui-mvp.md` §9).
+    ///
+    /// The message is a sentence Cauce already wrote, so there is no technical
+    /// part to hide.
     pub fn set_error(&mut self, message: impl Into<String>) {
         self.queued = false;
         self.error = Some(message.into());
+        self.error_details = None;
+    }
+
+    /// Surfaces a daemon failure: the visible text is the human sentence and the
+    /// code plus the daemon's message wait inside the disclosure
+    /// (`docs/contracts.md` §8).
+    pub fn set_failure(&mut self, error: &JobError) {
+        self.queued = false;
+        self.error = Some(human_error(error.code, &error.message));
+        self.error_details = Some(technical_details(error.code, &error.message));
     }
 
     /// A missing encoder or filter blocks the page before anything is queued.
@@ -198,6 +218,7 @@ impl ConvertState {
         self.rejected.clear();
         self.pending.clear();
         self.error = None;
+        self.error_details = None;
         self.queued = false;
     }
 
@@ -228,6 +249,23 @@ pub fn expand_dropped_folder(dir: &Path) -> Vec<String> {
         .collect();
     paths.sort();
     paths
+}
+
+/// Every path one drop contributes: files as they came, and each folder expanded
+/// one level without following symlinks (`docs/ui-mvp.md` §4 and
+/// `docs/contracts.md` §9). A single drop may carry several files and several
+/// folders at once, so the result is the concatenation in the order the desktop
+/// sent them.
+pub fn expand_dropped_paths(paths: Vec<PathBuf>) -> Vec<String> {
+    let mut expanded: Vec<String> = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            expanded.extend(expand_dropped_folder(&path));
+        } else {
+            expanded.push(path.to_string_lossy().into_owned());
+        }
+    }
+    expanded
 }
 
 /// Last path segment, which is all the UI ever shows (`docs/ui-mvp.md` §4).

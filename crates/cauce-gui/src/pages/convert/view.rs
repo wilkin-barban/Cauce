@@ -22,17 +22,28 @@ use super::state::{
 };
 use crate::client::Client;
 use crate::i18n::{localized_preset_description, localized_preset_name, t};
+use crate::pages::{self, ErrorSurface, error_surface};
 
 /// Catalog key of the drop zone (`docs/ui-mvp.md` §4). The key, not the sentence:
 /// `pages::convert` re-exports it and the view translates it at build time.
 pub const DROP_HINT: &str = "convert.drop_hint";
+
+/// Catalog key of the card headline and its hint.
+pub const DROP_TITLE: &str = "convert.drop_title";
+pub const DROP_SUBTITLE: &str = "convert.drop_subtitle";
+
+/// Widget name of the drop card, so a test finds it without a handle.
+pub const DROP_CARD: &str = "drop-card";
+
+/// Symbolic icon of the card: the icon theme ships it, so nothing is vendored.
+const DROP_ICON: &str = "document-send-symbolic";
 
 /// Every widget of the page, plus the page itself.
 #[derive(Clone)]
 pub struct Ui {
     pub page: adw::NavigationPage,
     pub toolbar: adw::ToolbarView,
-    pub drop_zone: gtk::Button,
+    pub drop_card: gtk::Button,
     pub add_files: gtk::Button,
     pub add_folder: gtk::Button,
     pub files_list: gtk::ListBox,
@@ -41,7 +52,7 @@ pub struct Ui {
     pub spinner: gtk::Spinner,
     pub inspecting: gtk::Box,
     pub phase_label: gtk::Label,
-    pub error_label: gtk::Label,
+    pub failure: ErrorSurface,
     pub output_row: adw::ActionRow,
     pub output_button: gtk::Button,
     pub preset_combo: adw::ComboRow,
@@ -58,14 +69,18 @@ pub struct Ui {
 }
 
 impl Ui {
-    fn build() -> Self {
+    /// Builds every widget of the page. Public so the widget tests can drive one
+    /// surface — the failure disclosure — without a whole shell around it.
+    pub fn build() -> Self {
+        // The card's dashed border and its `drag-over` state are the only CSS
+        // Cauce ships; installing it here keeps a page built on its own styled
+        // exactly like the one inside the window.
+        crate::window::install_styles();
+
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&adw::WindowTitle::new(t("section.convert_title"), "")));
 
-        let drop_zone = gtk::Button::with_label(t(DROP_HINT));
-        drop_zone.add_css_class("pill");
-        drop_zone.set_margin_top(18);
-        drop_zone.set_margin_bottom(18);
+        let drop_card = drop_card();
         let add_files = gtk::Button::with_label(t("convert.add_files"));
         let add_folder = gtk::Button::with_label(t("convert.add_folder"));
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -90,8 +105,7 @@ impl Ui {
         let phase_label = text_line("dim-label");
         phase_label.set_label(t("convert.phase_empty"));
 
-        let error_label = text_line("error");
-        error_label.set_visible(false);
+        let failure = error_surface("convert-error");
 
         let output_row = adw::ActionRow::new();
         output_row.set_title(t("convert.output_folder"));
@@ -129,6 +143,7 @@ impl Ui {
         details_body.append(&plan_details_line);
         details_body.append(&plan_reasons);
         let plan_details = gtk::Expander::new(Some(t("convert.details")));
+        plan_details.set_widget_name("plan-details");
         plan_details.set_expanded(false);
         plan_details.set_child(Some(&details_body));
         let plan_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -168,13 +183,13 @@ impl Ui {
         body.set_margin_bottom(12);
         body.set_margin_start(12);
         body.set_margin_end(12);
-        body.append(&drop_zone);
+        body.append(&drop_card);
         body.append(&actions);
         body.append(&inspecting);
         body.append(&files_list);
         body.append(&phase_label);
         body.append(&rejected_box);
-        body.append(&error_label);
+        body.append(&failure.area);
         body.append(&output_group);
         body.append(&preset_group);
         body.append(&plan_box);
@@ -204,7 +219,7 @@ impl Ui {
         Self {
             page,
             toolbar,
-            drop_zone,
+            drop_card,
             add_files,
             add_folder,
             files_list,
@@ -213,7 +228,7 @@ impl Ui {
             spinner,
             inspecting,
             phase_label,
-            error_label,
+            failure,
             output_row,
             output_button,
             preset_combo,
@@ -242,6 +257,55 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
 /// The toplevel a file dialog should be modal to.
 pub fn parent_window(widget: &gtk::Button) -> Option<gtk::Window> {
     widget.root().and_then(|root| root.downcast().ok())
+}
+
+/// The drop zone of `docs/ui-mvp.md` §4: a full-width card with a dashed border,
+/// a large symbolic icon and two lines of text, instead of a pill that only said
+/// "arrastrá".
+///
+/// It is a `GtkButton` on purpose: the button role is what makes it focusable,
+/// what makes `Enter` and `Space` activate it, and what routes the press to the
+/// same file chooser as the two explicit buttons.
+fn drop_card() -> gtk::Button {
+    let card = gtk::Button::new();
+    card.set_widget_name(DROP_CARD);
+    card.add_css_class("drop-card");
+    card.add_css_class("flat");
+    card.set_hexpand(true);
+    card.set_focusable(true);
+    card.set_tooltip_text(Some(t(DROP_HINT)));
+
+    let icon = gtk::Image::from_icon_name(DROP_ICON);
+    icon.set_pixel_size(32);
+    icon.add_css_class("dim-label");
+
+    let title = gtk::Label::new(Some(t(DROP_TITLE)));
+    title.add_css_class("heading");
+    let subtitle = text_line("dim-label");
+    subtitle.set_label(t(DROP_SUBTITLE));
+    subtitle.add_css_class("caption");
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    content.set_margin_top(10);
+    content.set_margin_bottom(10);
+    content.set_margin_start(12);
+    content.set_margin_end(12);
+    content.set_halign(gtk::Align::Center);
+    content.append(&icon);
+    content.append(&title);
+    content.append(&subtitle);
+
+    card.set_child(Some(&content));
+    card
+}
+
+/// Paints the `drag-over` state of the card: the class exists only while a drag
+/// hovers the drop zone, and the stylesheet in [`crate::window`] makes it visible.
+pub fn set_drag_over(card: &gtk::Button, active: bool) {
+    match active {
+        true => card.add_css_class("drag-over"),
+        false => card.remove_css_class("drag-over"),
+    }
 }
 
 pub fn heading(text: &str) -> gtk::Label {
@@ -343,8 +407,10 @@ pub fn refresh(
         let busy = state.phase() == ConvertPhase::Inspecting;
         ui.spinner.set_spinning(busy);
         ui.inspecting.set_visible(busy);
-        ui.error_label.set_label(state.error().unwrap_or_default());
-        ui.error_label.set_visible(state.error().is_some());
+        match state.error() {
+            Some(message) => pages::show_parts(&ui.failure, message, state.error_details()),
+            None => pages::clear_failure(&ui.failure),
+        }
         ui.output_row
             .set_subtitle(state.output_dir().unwrap_or(t("convert.not_chosen")));
         // The ratified column of the current locale, never a catalog key.

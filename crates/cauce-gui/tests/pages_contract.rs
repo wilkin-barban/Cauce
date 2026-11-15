@@ -8,11 +8,15 @@
 //! value comes from `cauce-core` and is built literally, never from a fixture.
 
 use cauce_core::{
-    Capabilities, DeviceFamily, DuplicatePolicy, HdrPolicy, Language, Preset, Settings,
-    SubtitlePolicy, Theme, system_presets,
+    Capabilities, CustomAudio, CustomBitrate, CustomContainer, CustomVideo, DeviceFamily,
+    DuplicatePolicy, ErrorCode, HdrPolicy, Language, Preset, Settings, SubtitlePolicy, Theme,
+    system_presets,
 };
+use cauce_gui::pages::convert::flows::preset_choices;
 use cauce_gui::pages::diagnostics::{capabilities_report, human_bytes};
-use cauce_gui::pages::presets::{group_presets, preset_detail};
+use cauce_gui::pages::presets::{
+    CUSTOM_CATEGORY, CustomDraft, category_label, group_presets, preset_detail,
+};
 use cauce_gui::pages::settings::{
     SettingsEdit, edit_params, output_dir_to_show, settings_after_edit, theme_from_str,
     theme_to_str,
@@ -63,6 +67,11 @@ fn sparse_preset(category: &str) -> Preset {
         normalize_audio: false,
         preferred_audio_language: None,
     }
+}
+
+/// The compact editor's default draft: a legal MP4 with H.264 and AAC.
+fn custom_draft() -> CustomDraft {
+    CustomDraft::defaults()
 }
 
 fn capabilities() -> Capabilities {
@@ -331,4 +340,126 @@ fn settings_edit_rejects_an_out_of_range_concurrency() {
             "{rejected} queda fuera de 1..=8: el resultado es el estado previo"
         );
     }
+}
+
+// The explicit categories of the Presets page and the one custom preset
+// (`docs/ui-mvp.md` §6, `docs/contracts.md` §2.3 and §6).
+
+#[test]
+fn categories_are_grouped_and_navigable() {
+    let presets = system_presets();
+    let groups = group_presets(presets);
+
+    // Four explicit groups, each with a translated header, and the custom slot.
+    let categories: Vec<&str> = groups.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(categories, ["tv", "social", "archive", "audio"]);
+    for (category, items) in &groups {
+        assert!(!items.is_empty(), "«{category}» no puede estar vacío");
+        let label = category_label(category);
+        assert!(!label.trim().is_empty(), "«{category}» necesita cabecera");
+        assert_ne!(label, *category, "«{category}» se traduce");
+    }
+    assert_eq!(category_label(CUSTOM_CATEGORY), "Personalizado");
+
+    // Navigable: every preset is reachable in exactly one group, and each group
+    // keeps the catalog order it was given.
+    let reached: Vec<&str> = groups
+        .iter()
+        .flat_map(|(_, items)| items.iter().map(|preset| preset.id.as_str()))
+        .collect();
+    assert_eq!(reached.len(), presets.len(), "ningún preset se duplica");
+    for (category, items) in &groups {
+        let expected: Vec<&str> = presets
+            .iter()
+            .filter(|preset| preset.category == *category)
+            .map(|preset| preset.id.as_str())
+            .collect();
+        let actual: Vec<&str> = items.iter().map(|preset| preset.id.as_str()).collect();
+        assert_eq!(
+            actual, expected,
+            "«{category}» conserva el orden del catálogo"
+        );
+    }
+    assert!(
+        reached.contains(&"system-smarttv-compat"),
+        "un preset concreto es alcanzable en su grupo"
+    );
+}
+
+#[test]
+fn custom_group_is_last() {
+    let mut presets: Vec<Preset> = system_presets().to_vec();
+    presets.push(custom_draft().to_custom().to_preset().expect("legal"));
+
+    let groups = group_presets(&presets);
+    let (last_category, last_items) = groups.last().expect("hay grupos");
+    assert_eq!(
+        last_category, CUSTOM_CATEGORY,
+        "«Personalizado» va al final"
+    );
+    assert_eq!(category_label(last_category), "Personalizado");
+    assert_eq!(last_items.len(), 1, "un solo preset personalizado");
+    assert_eq!(last_items[0].id, "custom-1");
+    assert_eq!(
+        groups
+            .iter()
+            .flat_map(|(_, items)| items.iter())
+            .filter(|preset| preset.id == "custom-1")
+            .count(),
+        1,
+        "el personalizado no se repite en otro grupo"
+    );
+}
+
+#[test]
+fn saving_a_custom_preset_lists_it_in_convert() {
+    // The editor's draft is what `presets.set_custom` receives.
+    let mut draft = custom_draft();
+    draft.container = CustomContainer::Mp4;
+    draft.video = CustomVideo::H264;
+    draft.audio = CustomAudio::Aac;
+    draft.bitrate = CustomBitrate::K192;
+    let custom = draft.to_custom();
+    assert_eq!(
+        custom.validate(),
+        Ok(()),
+        "el borrador por defecto es legal"
+    );
+
+    // The saved preset is what `presets.list` answers and Convertir renders.
+    let mut listed: Vec<Preset> = system_presets().to_vec();
+    listed.push(custom.to_preset().expect("legal"));
+    let choices = preset_choices(&listed);
+    assert_eq!(choices.len(), 14, "trece del sistema y el propio");
+    assert_eq!(
+        choices.last().map(String::as_str),
+        Some("Personalizado"),
+        "el combo de Convertir muestra el preset guardado"
+    );
+    assert_eq!(
+        listed[choices.len() - 1].id,
+        "custom-1",
+        "el índice del combo apunta al preset personalizado"
+    );
+
+    // A draft read back from the saved preset reproduces the same choices.
+    let reopened = CustomDraft::from_preset(&listed[13]);
+    assert_eq!(reopened, draft, "el editor reabre con lo que se guardó");
+}
+
+#[test]
+fn an_invalid_custom_draft_names_the_reason() {
+    let mut draft = custom_draft();
+    draft.container = CustomContainer::Webm;
+    draft.video = CustomVideo::H264;
+    let error = draft
+        .to_custom()
+        .validate()
+        .expect_err("WebM no transporta H.264");
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert!(
+        error.message.contains("webm"),
+        "el motivo nombra el contenedor: {}",
+        error.message
+    );
 }

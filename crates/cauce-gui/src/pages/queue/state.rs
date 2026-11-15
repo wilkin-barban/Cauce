@@ -8,9 +8,9 @@
 //! [`QueueState::apply_progress`] only refines a job that already exists, so an
 //! event for an unknown id cannot invent a row.
 
-use cauce_core::{Job, JobState, Progress};
+use cauce_core::{Job, JobError, JobState, Progress};
 
-use crate::i18n::t;
+use crate::i18n::{human_error, t, technical_details};
 
 /// The ten states of `docs/contracts.md` §4, in transition order.
 pub const STATES: [JobState; 10] = [
@@ -178,6 +178,7 @@ pub struct QueueState {
     jobs: Vec<Job>,
     queue_paused: bool,
     last_error: Option<String>,
+    last_details: Option<String>,
     loaded: bool,
 }
 
@@ -211,6 +212,11 @@ impl QueueState {
         self.last_error.as_deref()
     }
 
+    /// The code and the daemon's message, for the collapsed disclosure only.
+    pub fn last_details(&self) -> Option<&str> {
+        self.last_details.as_deref()
+    }
+
     /// Newest first, as `docs/ui-mvp.md` §5 asks; the daemon's own listing order
     /// is ascending because that is what the scheduler consumes.
     ///
@@ -239,6 +245,7 @@ impl QueueState {
         self.jobs = jobs;
         self.loaded = true;
         self.last_error = None;
+        self.last_details = None;
     }
 
     /// Refines the progress of a job that is already listed; unknown ids are
@@ -265,8 +272,18 @@ impl QueueState {
     }
 
     /// Surfaces a concrete failure inside the page (`docs/ui-mvp.md` §9).
+    ///
+    /// The message is a sentence Cauce already wrote, so nothing is hidden.
     pub fn set_error(&mut self, message: String) {
         self.last_error = Some(message);
+        self.last_details = None;
+    }
+
+    /// Surfaces a daemon failure: the page shows the human sentence and keeps the
+    /// code plus the daemon's message inside the disclosure (`docs/contracts.md` §8).
+    pub fn set_failure(&mut self, error: &JobError) {
+        self.last_error = Some(human_error(error.code, &error.message));
+        self.last_details = Some(technical_details(error.code, &error.message));
     }
 
     /// Only the actions the state machine allows, in display order.

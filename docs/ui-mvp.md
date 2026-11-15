@@ -102,11 +102,12 @@ Nunca se muestra un trabajo como completado si la validación falló.
 
 ## 6. Página Presets
 
-- Catálogo de los 13 presets, agrupado por Smart TV, Web, Archivo, Optimización, Audio y Música.
-- Cada tarjeta muestra nombre, descripción, contenedor, códecs y límites.
-- Al seleccionar, muestra el plan resumido y una advertencia si el preset depende de hardware no disponible.
-- En v0.1 no hay botón de edición ni creación; los presets personalizados llegan en v0.2.
-- Un preset del sistema no se puede modificar ni eliminar.
+- Catálogo de los 13 presets en **grupos explícitos y navegables**: Smart TV (`tv`), Web y redes (`social`), Archivo (`archive`), Audio (`audio`) y **Personalizado** (`custom`), siempre último. La barra lateral muestra un encabezado por grupo y, al seleccionar una fila, el panel de detalle sólo habla de ese preset.
+- Cada fila muestra nombre y una línea con contenedor y códecs; el panel de detalle muestra el nombre una sola vez, una frase de descripción y, dentro de un desplegable **«Detalles técnicos»** cerrado por defecto, los valores técnicos (contenedor, códecs, CRF, bitrate, resolución, HDR, subtítulos, faststart, metadatos).
+- Al seleccionar, muestra una advertencia si el preset depende de hardware no disponible.
+- Un preset del sistema no se puede modificar ni eliminar: el aviso de solo lectura sigue visible en su panel.
+- El grupo **Personalizado** contiene exactamente un preset propio (`custom-1`). Su panel ofrece un editor compacto con siete desplegables (contenedor, video, calidad, resolución, audio, bitrate, subtítulos), **Guardar** y **Borrar**. Guardar reemplaza el anterior; no hay editor genérico ni presets múltiples. Una combinación inválida se explica en línea, sin llamar al daemon.
+- El preset guardado aparece en el desplegable de **Convertir** sin reiniciar la app (`presets.list`).
 
 ## 7. Página Diagnóstico
 
@@ -135,7 +136,7 @@ Si FFmpeg falta, la página explica la instalación y no permite iniciar trabajo
 | Política de duplicados | Suffix por defecto |
 | Conservar temporal al fallar | No por defecto |
 | FFmpeg | Solo sistema; diagnóstico de ruta |
-| Presets personalizados | No en v0.1 |
+| Presets personalizados | Sí: exactamente uno (`custom-1`), guardado en `settings` y editable desde su grupo; el resto queda fuera de v0.1 |
 
 Los cambios se validan y persisten mediante `settings.set`. Un valor inválido no se guarda.
 

@@ -37,6 +37,45 @@ const APP_ICON: &str = "io.github.wilkin.Cauce";
 /// Symbolic icon every Adwaita-based theme ships; used when `APP_ICON` is absent.
 const FALLBACK_ICON: &str = "video-x-generic-symbolic";
 
+/// The only stylesheet Cauce ships: the drop card of Convertir needs a dashed
+/// border and a visible `drag-over` state, and neither exists in Adwaita
+/// (`docs/ui-mvp.md` §4). Everything else uses the theme's own classes.
+pub const STYLE_SHEET: &str = "
+.drop-card {
+  border: 1px dashed alpha(currentColor, 0.35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background-color: transparent;
+}
+
+.drop-card.drag-over {
+  border-color: @accent_bg_color;
+  background-color: alpha(@accent_bg_color, 0.15);
+}
+";
+
+/// Installs [`STYLE_SHEET`] once per display. Called by the window and by the
+/// Convertir page, so a page built on its own (as the widget tests do) is styled
+/// exactly like the one inside the shell.
+pub fn install_styles() {
+    static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if INSTALLED.get().is_some() {
+        return;
+    }
+    // Without a display there is nothing to style; a later call still installs.
+    let Some(display) = gtk::gdk::Display::default() else {
+        return;
+    };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(STYLE_SHEET);
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let _ = INSTALLED.set(());
+}
+
 /// What the shell believes about the daemon, so the chrome can be repainted
 /// without asking again (`docs/ui-mvp.md` §9 and §12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +177,7 @@ pub fn build(application: &adw::Application) -> adw::ApplicationWindow {
         .default_width(960)
         .default_height(640)
         .build();
+    install_styles();
 
     let client = Rc::new(Client::connect());
     let content: Rc<RefCell<Vec<adw::NavigationPage>>> = Rc::new(RefCell::new(pages::all(&client)));

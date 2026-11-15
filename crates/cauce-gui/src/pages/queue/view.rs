@@ -26,6 +26,7 @@ use super::state::{JobAction, QueueState, progress_label, state_label};
 use crate::client::Client;
 use crate::i18n::t;
 use crate::pages::convert::base_name;
+use crate::pages::{self, ErrorSurface, error_surface};
 
 /// Catalog key of the empty headline (`docs/ui-mvp.md` §5).
 pub const EMPTY_TITLE: &str = "queue.empty_title";
@@ -44,10 +45,12 @@ pub struct Ui {
     pub jobs_list: gtk::ListBox,
     pub stack: gtk::Stack,
     pub hint: gtk::Label,
-    pub notice: gtk::Label,
+    pub notice: ErrorSurface,
     pub footer: gtk::Label,
     pub spinner: gtk::Spinner,
     pub error_page: adw::StatusPage,
+    pub error_expander: gtk::Expander,
+    pub error_details: gtk::Label,
     pub retry_button: gtk::Button,
 }
 
@@ -92,13 +95,25 @@ impl Ui {
         loading.append(&spinner);
         loading.append(&gtk::Label::new(Some(t("queue.loading"))));
 
+        // The error page says what happened in one sentence and keeps the code
+        // and the daemon's wording behind the closed disclosure (`L53`, §8).
         let error_page = adw::StatusPage::new();
         error_page.set_icon_name(Some("dialog-error-symbolic"));
         error_page.set_title(t("queue.error_title"));
         let retry_button = gtk::Button::with_label(t("queue.retry"));
         retry_button.add_css_class("pill");
         retry_button.set_halign(gtk::Align::Center);
-        error_page.set_child(Some(&retry_button));
+
+        let error_details = text_line("caption");
+        error_details.add_css_class("dim-label");
+        let error_expander = gtk::Expander::new(Some(t("error.technical_details")));
+        error_expander.set_expanded(false);
+        error_expander.set_child(Some(&error_details));
+        let error_body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        error_body.set_halign(gtk::Align::Center);
+        error_body.append(&error_expander);
+        error_body.append(&retry_button);
+        error_page.set_child(Some(&error_body));
 
         let stack = gtk::Stack::new();
         stack.add_named(&scroll, Some("list"));
@@ -110,8 +125,7 @@ impl Ui {
         let hint = text_line("dim-label");
         hint.set_label("");
         hint.set_visible(false);
-        let notice = text_line("error");
-        notice.set_visible(false);
+        let notice = error_surface("queue-notice");
         let footer = text_line("caption");
         footer.add_css_class("dim-label");
 
@@ -120,7 +134,7 @@ impl Ui {
         body.set_margin_bottom(12);
         body.set_margin_start(12);
         body.set_margin_end(12);
-        body.append(&notice);
+        body.append(&notice.area);
         body.append(&hint);
         body.append(&stack);
         body.append(&footer);
@@ -150,6 +164,8 @@ impl Ui {
             footer,
             spinner,
             error_page,
+            error_expander,
+            error_details,
             retry_button,
         }
     }
@@ -291,6 +307,10 @@ pub fn show_phase(ui: &Ui, state: &QueueState) {
     if let Some(message) = state.last_error() {
         ui.error_page.set_description(Some(message));
     }
+    ui.error_expander
+        .set_visible(state.last_details().is_some());
+    ui.error_details
+        .set_label(state.last_details().unwrap_or_default());
     ui.queue_toggle.set_label(t(state.toggle()));
     let hint = state.pause_hint();
     ui.hint.set_visible(hint.is_some());
@@ -368,15 +388,19 @@ fn parent_of(path: &str) -> String {
         .unwrap_or_else(|| path.to_owned())
 }
 
-/// A concrete failure inside the page (`docs/ui-mvp.md` §9).
+/// A concrete failure inside the page (`docs/ui-mvp.md` §9). `message` is a
+/// sentence Cauce already wrote, so there is nothing to hide.
 pub fn show_notice(ui: &Ui, message: Option<String>) {
     match message {
-        Some(message) => {
-            ui.notice.set_label(&message);
-            ui.notice.set_visible(true);
-        }
-        None => ui.notice.set_visible(false),
+        Some(message) => pages::show_parts(&ui.notice, &message, None),
+        None => pages::clear_failure(&ui.notice),
     }
+}
+
+/// A daemon failure: the human sentence is visible and the raw text waits inside
+/// the disclosure (`docs/contracts.md` §8).
+pub fn show_failure(ui: &Ui, error: &cauce_core::JobError) {
+    pages::show_failure(&ui.notice, error);
 }
 
 pub fn headline(text: &str) -> gtk::Label {

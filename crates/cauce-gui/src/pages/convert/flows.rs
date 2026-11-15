@@ -14,10 +14,12 @@ use cauce_core::{Capabilities, ConversionPlan, Job, MediaSnapshot, Preset, Setti
 use libadwaita as adw;
 use serde_json::json;
 
-use super::state::{ConvertState, expand_dropped_folder, plan_details, plan_headline};
+use super::state::{
+    ConvertState, expand_dropped_folder, expand_dropped_paths, plan_details, plan_headline,
+};
 use super::view::{self, Ui, clear_plan, parent_window, text_line};
 use crate::client::Client;
-use crate::i18n::{localized_preset_name, t};
+use crate::i18n::{human_error, localized_preset_name, t};
 
 /// Connects every interaction of the page and loads the daemon's first answers.
 pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
@@ -27,10 +29,11 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
     let run_inspect = inspect_handle(client, state, &refresh, &run_plan);
     let add_paths = add_handle(state, &refresh, &run_inspect);
     let run_queue = queue_handle(ui, client, state, &refresh, &run_plan);
+    let reload_presets = presets_handle(ui, client, state, &presets, &refresh, &run_plan);
     let open_files = picker_handle(ui, &add_paths, false);
     let open_folder = picker_handle(ui, &add_paths, true);
 
-    for button in [&ui.drop_zone, &ui.add_files] {
+    for button in [&ui.drop_card, &ui.add_files] {
         let open_files = Rc::clone(&open_files);
         button.connect_clicked(move |_| open_files());
     }
@@ -57,24 +60,36 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
         }
     });
 
+    // The whole card is the target. A desktop drop may carry several files and
+    // several folders at once, so every `GFile` of the list is kept and each
+    // folder is expanded one level (`docs/ui-mvp.md` §4).
     let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    target.connect_enter({
+        let card = ui.drop_card.clone();
+        move |_, _, _| {
+            view::set_drag_over(&card, true);
+            gdk::DragAction::COPY
+        }
+    });
+    target.connect_motion(|_, _, _| gdk::DragAction::COPY);
+    target.connect_leave({
+        let card = ui.drop_card.clone();
+        move |_| view::set_drag_over(&card, false)
+    });
     target.connect_drop({
+        let card = ui.drop_card.clone();
         let add_paths = Rc::clone(&add_paths);
         move |_, value, _, _| {
+            view::set_drag_over(&card, false);
             let Ok(files) = value.get::<gdk::FileList>() else {
                 return false;
             };
-            let mut paths = Vec::new();
-            for file in files.files() {
-                let Some(path) = file.path() else {
-                    continue;
-                };
-                if path.is_dir() {
-                    paths.extend(expand_dropped_folder(&path));
-                } else {
-                    paths.push(path.to_string_lossy().into_owned());
-                }
-            }
+            let dropped: Vec<std::path::PathBuf> = files
+                .files()
+                .into_iter()
+                .filter_map(|file| file.path())
+                .collect();
+            let paths = expand_dropped_paths(dropped);
             if paths.is_empty() {
                 return false;
             }
@@ -82,7 +97,7 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
             true
         }
     });
-    ui.drop_zone.add_controller(target);
+    ui.drop_card.add_controller(target);
 
     let shortcuts = gtk::ShortcutController::new();
     for (trigger, action) in [
@@ -100,8 +115,73 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
     }
     ui.toolbar.add_controller(shortcuts);
 
-    bootstrap(client, ui, state, &presets, &refresh, &run_plan);
+    // The Presets page owns the custom preset: when it saves or deletes one, the
+    // combo here is rebuilt from `presets.list` without a restart.
+    crate::pages::on_presets_change({
+        let reload_presets = Rc::clone(&reload_presets);
+        Rc::new(move || reload_presets())
+    });
+
+    bootstrap(client, state, &reload_presets, &refresh, &run_plan);
     refresh();
+}
+
+/// The labels of the preset combo, in the order `presets.list` returns them. The
+/// combo index is the index of the same slice, so the selected id is always the
+/// preset the daemon planned for.
+pub fn preset_choices(presets: &[Preset]) -> Vec<String> {
+    presets
+        .iter()
+        .map(|preset| localized_preset_name(preset).to_owned())
+        .collect()
+}
+
+/// `presets.list`, applied to the combo. The current choice survives a reload
+/// when the daemon still offers it; otherwise the first preset wins.
+fn presets_handle(
+    ui: &Ui,
+    client: &Rc<Client>,
+    state: &Rc<RefCell<ConvertState>>,
+    presets: &Rc<RefCell<Vec<Preset>>>,
+    refresh: &Rc<dyn Fn()>,
+    run_plan: &Rc<dyn Fn()>,
+) -> Rc<dyn Fn()> {
+    let (ui, client, state) = (ui.clone(), Rc::clone(client), Rc::clone(state));
+    let (presets, refresh, run_plan) =
+        (Rc::clone(presets), Rc::clone(refresh), Rc::clone(run_plan));
+    Rc::new(move || {
+        let (ui, client, state) = (ui.clone(), Rc::clone(&client), Rc::clone(&state));
+        let (presets, refresh, run_plan) = (
+            Rc::clone(&presets),
+            Rc::clone(&refresh),
+            Rc::clone(&run_plan),
+        );
+        glib::spawn_future_local(async move {
+            let list = client
+                .call("presets.list", json!({}))
+                .await
+                .ok()
+                .and_then(|value| serde_json::from_value::<Vec<Preset>>(value).ok());
+            let Some(list) = list else {
+                return;
+            };
+            let wanted = state.borrow().preset_id().map(str::to_owned);
+            let index = wanted
+                .and_then(|id| list.iter().position(|preset| preset.id == id))
+                .unwrap_or(0);
+            let choices = preset_choices(&list);
+            let labels: Vec<&str> = choices.iter().map(String::as_str).collect();
+            ui.preset_combo
+                .set_model(Some(&gtk::StringList::new(&labels)));
+            let first = list.first().map(|preset| preset.id.clone());
+            *presets.borrow_mut() = list;
+            state.borrow_mut().set_preset(first);
+            ui.preset_combo
+                .set_selected(u32::try_from(index).unwrap_or(0));
+            refresh();
+            run_plan();
+        });
+    })
 }
 
 /// Previews the plan of the first accepted input, with every `reasoning[]` line.
@@ -175,7 +255,7 @@ fn inspect_handle(
                         Some(t("convert.unreadable").replace("{error}", &error.to_string()))
                     }
                 },
-                Err(error) => Some(error.message),
+                Err(error) => Some(human_error(error.code, &error.message)),
             };
             let message = failure.unwrap_or_else(|| t("convert.daemon_no_data").to_owned());
             state.borrow_mut().fail_pending(&message);
@@ -236,7 +316,7 @@ fn queue_handle(
                     ui.confirm_label.set_visible(true);
                     run_plan();
                 }
-                Err(error) => state.borrow_mut().set_error(error.message),
+                Err(error) => state.borrow_mut().set_failure(&error),
             }
             refresh();
         });
@@ -245,14 +325,14 @@ fn queue_handle(
 
 /// `Ctrl+O` picks files, `Ctrl+Shift+O` a folder; both feed `add_paths`.
 fn picker_handle(ui: &Ui, add_paths: &Rc<dyn Fn(Vec<String>)>, folder: bool) -> Rc<dyn Fn()> {
-    let (drop_zone, add_paths) = (ui.drop_zone.clone(), Rc::clone(add_paths));
+    let (drop_card, add_paths) = (ui.drop_card.clone(), Rc::clone(add_paths));
     Rc::new(move || {
         let dialog = gtk::FileDialog::new();
         dialog.set_title(match folder {
             true => t("convert.add_folder"),
             false => t("convert.add_files"),
         });
-        let parent = parent_window(&drop_zone);
+        let parent = parent_window(&drop_card);
         let add_paths = Rc::clone(&add_paths);
         glib::spawn_future_local(async move {
             let paths = match folder {
@@ -292,12 +372,12 @@ fn output_handle(
     refresh: &Rc<dyn Fn()>,
     run_plan: &Rc<dyn Fn()>,
 ) -> impl Fn(&gtk::Button) + 'static {
-    let (drop_zone, client, state) = (ui.drop_zone.clone(), Rc::clone(client), Rc::clone(state));
+    let (drop_card, client, state) = (ui.drop_card.clone(), Rc::clone(client), Rc::clone(state));
     let (refresh, run_plan) = (Rc::clone(refresh), Rc::clone(run_plan));
     move |_| {
         let dialog = gtk::FileDialog::new();
         dialog.set_title(t("convert.folder_dialog"));
-        let parent = parent_window(&drop_zone);
+        let parent = parent_window(&drop_card);
         let (client, state) = (Rc::clone(&client), Rc::clone(&state));
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         glib::spawn_future_local(async move {
@@ -316,7 +396,7 @@ fn output_handle(
             run_plan();
             let params = json!({ "output_dir": chosen });
             if let Err(error) = client.call("settings.set", params).await {
-                state.borrow_mut().set_error(error.message);
+                state.borrow_mut().set_failure(&error);
                 refresh();
             }
         });
@@ -326,15 +406,16 @@ fn output_handle(
 /// Capabilities, presets and the saved output folder, each tolerated on failure.
 fn bootstrap(
     client: &Rc<Client>,
-    ui: &Ui,
     state: &Rc<RefCell<ConvertState>>,
-    presets: &Rc<RefCell<Vec<Preset>>>,
+    reload_presets: &Rc<dyn Fn()>,
     refresh: &Rc<dyn Fn()>,
     run_plan: &Rc<dyn Fn()>,
 ) {
-    let (client, ui, state) = (Rc::clone(client), ui.clone(), Rc::clone(state));
-    let (presets, refresh, run_plan) =
-        (Rc::clone(presets), Rc::clone(refresh), Rc::clone(run_plan));
+    // The catalog is not awaited here: one path fills the combo, so a saved
+    // custom preset and the first load can never disagree.
+    reload_presets();
+    let (client, state) = (Rc::clone(client), Rc::clone(state));
+    let (refresh, run_plan) = (Rc::clone(refresh), Rc::clone(run_plan));
     glib::spawn_future_local(async move {
         let capabilities = client
             .call("system.capabilities", json!({}))
@@ -344,25 +425,6 @@ fn bootstrap(
         if let Some(capabilities) = capabilities {
             state.borrow_mut().apply_capabilities(&capabilities);
             refresh();
-        }
-        let list = client
-            .call("presets.list", json!({}))
-            .await
-            .ok()
-            .and_then(|value| serde_json::from_value::<Vec<Preset>>(value).ok());
-        if let Some(list) = list {
-            let names: Vec<String> = list
-                .iter()
-                .map(|preset| localized_preset_name(preset).to_owned())
-                .collect();
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            ui.preset_combo
-                .set_model(Some(&gtk::StringList::new(&names)));
-            let first = list.first().map(|preset| preset.id.clone());
-            *presets.borrow_mut() = list;
-            state.borrow_mut().set_preset(first);
-            refresh();
-            run_plan();
         }
         let settings = client
             .call("settings.get", json!({}))

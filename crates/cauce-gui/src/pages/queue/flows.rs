@@ -221,7 +221,7 @@ fn build_refresh(
                             t("queue.unreadable").replace("{error}", &error.to_string()),
                         ),
                     },
-                    Err(error) => state.borrow_mut().set_error(error.message),
+                    Err(error) => state.borrow_mut().set_failure(&error),
                 }
                 render();
                 in_flight.set(false);
@@ -257,9 +257,9 @@ fn build_act(
                     Ok(_) => view::show_notice(&ui, Some(success(action, &name))),
                     Err(error) => {
                         if error.code == ErrorCode::DaemonUnavailable {
-                            state.borrow_mut().set_error(error.message.clone());
+                            state.borrow_mut().set_failure(&error);
                         }
-                        view::show_notice(&ui, Some(error.message));
+                        view::show_failure(&ui, &error);
                     }
                 }
                 refresh();
@@ -320,9 +320,9 @@ fn toggle_handle(
                 }
                 Err(error) => {
                     if error.code == ErrorCode::DaemonUnavailable {
-                        state.borrow_mut().set_error(error.message.clone());
+                        state.borrow_mut().set_failure(&error);
                     }
-                    view::show_notice(&ui, Some(error.message));
+                    view::show_failure(&ui, &error);
                 }
             }
             render();
