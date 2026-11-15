@@ -677,3 +677,12 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Set final en `odd/screenshots/`: `01-convertir` (1440), `02-cola` (1440, trabajo real), `03-presets` (1440), `04-ajustes` (1440), `05-diagnostico-960` (960), `06-convertir-960` (960, CTA visible).
 - **Faltante documentado**: Convertir **con archivo** sigue sin evidencia (DnD imposible con `xdotool` sin ventana origen; el `GtkFileDialog` no cierra bajo Xvfb).
 - **Defectos visuales que persisten** (bajo riesgo, no corregidos en esta pasada): preset truncado a 960 ("Smart TV — Máxima Co…") aunque con tooltip; en la captura de 960 se ve una franja de 2-3 px del encabezado anterior en el borde superior (resto de frame, no reproducible en código).
+
+**L48 (pasada final de capturas) — tres verificadas, dos omitidas y un artefacto confirmado:**
+- Captura por **ventana cliente** (`import -window $WID`, ImageMagick): sin recortes, sin franjas de frames previos y sin puntero por construcción.
+- **`02-cola.png` verificada a ojo**: título "Cola", sidebar resaltando Cola, trabajo real (`sample-h264-aac.mp4`, preset, **"Fallida"**) y "Pausar cola" como botón pill (el arreglo se ve). Nota: el trabajo falló en esta corrida, no completó.
+- **El punto junto a "Cola" PERSISTE en la captura de ventana cliente**, o sea que **no era el cursor X**: es un artefacto real dibujado por la app junto al título de la sección. Queda documentado como defecto abierto, sin causa raíz identificada.
+- **`01-convertir.png`** (1440) y **`06-convertir-960.png`** (960, CTA visible) recapturadas por ventana cliente.
+- **Omitidas y borradas**: `Ajustes` y `Diagnóstico` no cambiaron de sección tras los clics (las imágenes salían idénticas entre sí), así que no hay archivo con nombre falso. `03-presets` tampoco se pudo verificar en esta pasada y se retiró.
+- Set final: `01-convertir` (1440), `02-cola` (1440), `06-convertir-960` (960). Faltan capturas verificadas de Presets, Ajustes y Diagnóstico.
+- No se siguió iterando, según lo indicado.
