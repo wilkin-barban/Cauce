@@ -349,3 +349,18 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Cambio estructural permitido por el usuario: `JobError`/`ErrorCode` se extrajeron de `src/job.rs` a `src/error.rs` (dominio propio, `contracts.md` §8) y `tests/domain_contracts.rs` se partió en `tests/{time,media,plan,error,job,preset,settings}_contracts.rs` más `tests/common/mod.rs`.
 - Prueba de no-regresión: los mismos 12 tests de contrato conservan nombre y aserciones; suite total 18/18; T3 byte-idéntico.
 - Efecto en el plan: 25 tareas → 30 commits.
+
+**L9 (T4 · C-012 · parser de FFprobe) — entrada escrita antes de implementar:**
+- RED previsto: `cargo test -p cauce-core --test probe_contracts` falla por `parse_ffprobe` inexistente (E0432/E0425).
+- Casos: capturas reales de los 5 fixtures; `duration` ausente → `duration_ms = 0`; audio sin `bit_rate` → `None`; subtítulos `text` vs `bitmap`; FPS fraccionario `30000/1001`; JSON basura → `PROBE_FAILED`.
+- Diseño: parser puro en `cauce-core::probe` sin procesos; las capturas reales de `ffprobe` se guardan como JSON en `tests/fixtures/ffprobe/` para no ejecutar binarios desde los tests de `cauce-core`.
+
+**L9 (T4) — RED observado, GREEN y decisiones:**
+- RED real: `error[E0432]: unresolved import `cauce_core::probe`` (módulo inexistente) con los 8 tests ya escritos.
+- GREEN: 8/8 en `probe_contracts` + `probe_edges`; suite total 26/26; `fmt --check` y `clippy -D warnings` limpios.
+- Firma: `parse_ffprobe(path: &str, probed_at: Timestamp, source: &str) -> Result<MediaSnapshot, JobError>`; malformado → `PROBE_FAILED` no reintentable.
+- Reglas fijadas: contenedor por extensión con fallback al primer token de `format_name`; `duration_ms` redondeado, ausente → 0; `fps` desde `r_frame_rate` (o `avg_frame_rate`) como fracción; `bit_depth` desde `bits_per_raw_sample` o sufijo de `pix_fmt`; `is_hdr` = `color_transfer` en {`smpte2084`,`arib-std-b67`}; subtítulos bitmap {`dvd_subtitle`,`hdmv_pgs_subtitle`,`dvb_subtitle`,`xsub`} y el resto texto; `language` `und` → `None`; streams `data`/`attachment` descartados.
+- Las capturas reales de `ffprobe` se commitean minificadas en `tests/fixtures/ffprobe/` (11 KB total) para que los tests de `cauce-core` no ejecuten binarios.
+- División por la regla ≤400: `24d4e1e` capturas · `6620342` parser + captura MP4 (320) · `fd5987d` multiformato y bordes (247). Los 8 tests se escribieron antes de la implementación y se reparten entre los dos últimos commits; ambos comparten el mismo RED observado.
+- Hallazgo del fixture real: el AAC de `generate.sh` es mono (`channels: 1`), no estéreo. El test afirma el byte real, no el valor esperado a mano.
+- T4 se ejecutó delegado a un writer acotado; el parent verificó suite, fmt y clippy por su cuenta antes de commitear.
