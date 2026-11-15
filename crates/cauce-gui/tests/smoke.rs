@@ -2,8 +2,8 @@
 //!
 //! `CAUCE_SMOKE=1` makes the shell print `window-ready` after its first map and
 //! quit on its own, so the test proves that a window really opened instead of
-//! trusting that the process started. A missing `xvfb-run`/`Xvfb` is reported
-//! and the test is skipped, never silently passed.
+//! trusting that the process started. A missing `xvfb-run`/`Xvfb` fails the test
+//! with what to install instead of skipping it silently (review finding R3-003).
 
 use std::fs;
 use std::path::PathBuf;
@@ -22,12 +22,17 @@ fn in_path(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn xvfb_ready() -> bool {
-    let available = in_path("xvfb-run") && in_path("Xvfb");
-    if !available {
-        eprintln!("se omite el smoke de GUI: falta `xvfb-run` o `Xvfb` en PATH");
-    }
-    available
+/// Fails loudly instead of skipping: a green run must mean a window really
+/// opened, so a missing display tool is a broken environment, not a pass.
+fn require_display_tooling() {
+    let missing: Vec<&str> = ["xvfb-run", "Xvfb"]
+        .into_iter()
+        .filter(|tool| !in_path(tool))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "faltan {missing:?} en PATH: instalá Xvfb (`apt install xvfb`) para correr el smoke de la GUI sin display real"
+    );
 }
 
 /// A fresh `XDG_RUNTIME_DIR` so the test never talks to the host's real daemon.
@@ -86,9 +91,7 @@ fn run_shell(tag: &str) -> (i32, String) {
 
 #[test]
 fn window_opens_under_xvfb() {
-    if !xvfb_ready() {
-        return;
-    }
+    require_display_tooling();
     let (code, stdout) = run_shell("open");
     assert_eq!(code, 0, "el shell debe salir con 0; stdout: {stdout}");
     assert!(
@@ -99,9 +102,7 @@ fn window_opens_under_xvfb() {
 
 #[test]
 fn window_opens_without_a_daemon() {
-    if !xvfb_ready() {
-        return;
-    }
+    require_display_tooling();
     let (code, stdout) = run_shell("no-daemon");
     assert_eq!(
         code, 0,
