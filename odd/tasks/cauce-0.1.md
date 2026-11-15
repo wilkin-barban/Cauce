@@ -633,3 +633,15 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Arreglo identificado, no ejecutado por presupuesto de contexto: calcular el desplazamiento con `xdotool getwindowgeometry --shell` (o `xwininfo -id $WID | grep Absolute`) y aplicar ese offset a todas las coordenadas, más verificar tras cada clic con `jobs.list`/captura que la sección cambió antes de continuar.
 - Se descartaron las cuatro capturas nuevas: no eran evidencia de Cola, Presets ni Ajustes. `odd/screenshots/` conserva solo `01-convertir.png`, que sigue siendo válida.
 - La conversión iniciada desde la UI **sigue sin ejecutarse**.
+
+**L43 (QA visual completa) — capturas verificadas y defectos reales:**
+- Offset medido con `xwininfo`: cliente en (240,130) 1060×760, frame de openbox idéntico ⇒ **offset (0,0)**; el fallo anterior era que `xdotool search` devolvía una ventana 1×1 no mapeada. Ahora `--onlyvisible` y verificación por diferencia de frames (`cmp -s`) tras cada clic: Cola, Presets, Ajustes y Diagnóstico cambiaron al primer intento.
+- **Conversión iniciada desde la UI**: `jobs.list` confirma 1 trabajo en `completed` (96 %), salida en `~/cauce-qa-out`. El primer clic tras cada pausa se perdía por un frame invisible de openbox; detectado con `XQueryPointer` y reintentado.
+- Capturas en `odd/screenshots/`: `01-convertir`, `02-cola`, `03-presets`, `04-ajustes`, `05-diagnostico` (1440×900, sha256 verificado contra el host).
+- **Defectos observados** (sin corregir todavía, son de esta pasada):
+  - Convertir: preset truncado ("Smart TV — Máxima Co…"); "Añadir archivos/carpeta" sin jerarquía frente a la CTA; **la CTA "Añadir a la cola" cae bajo el pliegue a 960×640** sin scrollbar visible; texto secundario de bajo contraste; el resumen repite la descripción del preset.
+  - Cola: etiqueta "Completada" con barra al 96 %; "Pausar cola"/"Abrir carpeta" sin aspecto de botón; `✕` sin etiqueta accesible junto a las acciones; artefacto suelto junto al título.
+  - Presets: "Nombre" duplica el título del panel; la fila seleccionada rompe en dos líneas y desalinea la lista; columnas cortadas sin indicador de scroll; valores en gris claro.
+  - Ajustes: "Carpeta de salida" vacía aunque Convertir ya la fijó; ancho de tarjetas distinto al resto; el icono solapa el texto a 960 px.
+  - Diagnóstico: "Actualizar"/"Copiar informe" con baseline inconsistente; artefacto suelto entre tarjetas; icono casi invisible.
+- La ventana se capturó a 1060×760 porque a 960×640 la CTA quedaba oculta; **el tamaño por defecto hay que revisarlo**.
