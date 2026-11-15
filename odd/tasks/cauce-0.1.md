@@ -433,3 +433,13 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - `insert_job` es una sola transacción (trabajo + reserva + evento); una colisión de destino no deja ni fila ni evento. Recuperación marca `probing|running|paused|validating` como `interrupted` con evento `recovery`, sin tocar `queued`.
 - Corte en 5 commits ≤400 autoradas: 394 (esquema + migraciones, con `Cargo.lock` de 242 líneas generadas) · 181 (store y ajustes) · 342 (codec + operaciones de trabajos) · 255 y 362 (tests).
 - **Pendiente de T12**: la prueba de "transición inválida rechazada sin escribir evento" y el rechazo con `FFMPEG_FEATURE_MISSING` al arrancar un trabajo (T9 solo diagnostica).
+
+**L18 (T12 · C-031) — RED, GREEN y una discrepancia entre documentos resuelta:**
+- RED real: `E0432` por `transition_for`, `JobAction`, `on_restart` y `next_startable`; 18 errores `E0599` por `Store::transition`, `apply_action` y `active_count`.
+- GREEN: 9 tests de máquina de estados + 6 de scheduler + 9 de transiciones; suite 155/155; fmt y clippy limpios.
+- Tabla de transiciones copiada literal de `contracts.md` §4 y verificada con la matriz completa 10×10: exactamente los pares documentados son válidos.
+- **Discrepancia entre documentos**: `contracts.md` §4 dice que un reinicio convierte `probing|running|validating` en `interrupted`; `data-model.md` §4 agrega `paused`. Se alineó `on_restart` a `data-model.md` (incluye `paused`) porque el proceso de un trabajo pausado muere con el daemon y la recuperación de T11 ya lo interrumpía. Test `restart_interrupts_a_paused_job_too` con sonda negativa verificada. Recomendación: agregar `paused` a la lista de `contracts.md` §4.
+- `next_startable` es la única política de v0.1: prioridad DESC, `created_at` ASC, `id` ASC; devuelve `None` con la cola pausada, en el límite de concurrencia o sin trabajos `queued`.
+- Ocupan slot: `probing`, `running`, `paused`, `validating`, `cancelling`.
+- Limitación conocida: transicionar a `failed` sin `error_code` persistido viola el CHECK del esquema; el daemon deberá guardar el error antes de la transición (T13).
+- Corte: 146 (state) + 262 (tests) + 156 (scheduler con tests) + 128 (transitions) + 356 (tests).
