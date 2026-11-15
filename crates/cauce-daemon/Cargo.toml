@@ -5,3 +5,23 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Cauce headless daemon owning the queue and conversions"
+
+[dependencies]
+cauce-core = { path = "../cauce-core" }
+cauce-ffmpeg = { path = "../cauce-ffmpeg" }
+cauce-jobs = { path = "../cauce-jobs" }
+# `SO_PEERCRED` for the local peer check and `getrandom(2)` for job ids
+# (`docs/contracts.md` §5).
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Runtime, socket and broadcaster (`docs/architecture.md` §9). No `signal`
+# feature: SIGINT/SIGTERM are two `libc` handlers plus a flag poll in `main`.
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+] }
