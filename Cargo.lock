@@ -22,6 +22,7 @@ version = "0.1.0"
 name = "cauce-ffmpeg"
 version = "0.1.0"
 dependencies = [
+ "cauce-core",
  "serde_json",
 ]
 

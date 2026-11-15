@@ -6,5 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 description = "Cauce system FFmpeg and FFprobe integration"
 
+[dependencies]
+cauce-core = { path = "../cauce-core" }
+
 [dev-dependencies]
 serde_json = "1"
