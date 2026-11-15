@@ -667,3 +667,13 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Invalidado y no commiteado**: `04-ajustes` salió byte-casi-idéntico a `03-presets` (112 353 vs 112 350) y `05-diagnostico` repitió el tamaño de la corrida anterior; ninguno prueba su sección. Se conservan las versiones previas de ambas, marcadas como anteriores a las correcciones.
 - **Drag & drop descartado**: `xdotool` no puede iniciar un XDND desde un gestor de archivos que no está corriendo; sin una ventana origen no hay arrastre posible. "Convertir con archivo" queda sin evidencia visual.
 - Nota sobre el arreglo 3: la base persiste `percent=96` para el trabajo completado, pero la **vista** debe pintar 100 % y "Completada"; la captura de Cola es la que debe confirmarlo y no se midió el píxel por presupuesto de contexto.
+
+**L47 (corrección de evidencia y cierre del QA visual) — pasada final:**
+- **Error de evidencia detectado por el usuario y corregido**: `06-convertir-960.png` mostraba **Diagnóstico**, no Convertir. No se acepta como prueba de la CTA.
+- Renombrada esa captura a **`05-diagnostico-960.png`** y usada como evidencia válida de Diagnóstico a 960×640; se retiró la `05-diagnostico.png` de 1440 anterior a las correcciones.
+- **`06-convertir-960.png` nueva y verificada visualmente**: título "Convertir", drop zone, Destino, Preset y **CTA "Añadir a la cola" visible** a 960×640 con el plan en una línea. Esto cierra el defecto crítico 1.
+- **`04-ajustes.png` nueva a 1440×900**, capturada partiendo de Diagnóstico con geometría medida y `cmp -s` de verificación; no se abrió ningún `GtkFileDialog`.
+- Todas las capturas con `-draw_mouse 0`: el punto junto a "Cola" era el puntero X, queda eliminado.
+- Set final en `odd/screenshots/`: `01-convertir` (1440), `02-cola` (1440, trabajo real), `03-presets` (1440), `04-ajustes` (1440), `05-diagnostico-960` (960), `06-convertir-960` (960, CTA visible).
+- **Faltante documentado**: Convertir **con archivo** sigue sin evidencia (DnD imposible con `xdotool` sin ventana origen; el `GtkFileDialog` no cierra bajo Xvfb).
+- **Defectos visuales que persisten** (bajo riesgo, no corregidos en esta pasada): preset truncado a 960 ("Smart TV — Máxima Co…") aunque con tooltip; en la captura de 960 se ve una franja de 2-3 px del encabezado anterior en el borde superior (resto de frame, no reproducible en código).
