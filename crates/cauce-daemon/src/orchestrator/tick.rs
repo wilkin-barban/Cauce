@@ -9,7 +9,7 @@ use cauce_core::{
 };
 use cauce_ffmpeg::runner::spawn;
 
-use crate::dispatch::{Daemon, broadcast_queue, find_preset};
+use crate::dispatch::{Daemon, broadcast_queue};
 use crate::events::Event;
 
 use super::{OrchestratorConfig, REASON_SCHEDULER, RunningJob, SAVE_PROGRESS_INTERVAL};
@@ -261,8 +261,9 @@ fn start(daemon: &Daemon, config: &OrchestratorConfig, job: &Job) -> Result<(), 
     let probed_at = utc_now()?;
     let probe =
         cauce_ffmpeg::probe::probe_file(&config.toolchain, Path::new(&job.input_path), probed_at)?;
-    let preset = find_preset(&job.preset_id)?;
-    let plan = plan_conversion(&probe, preset)?;
+    // System or custom: one resolution path for every job (`docs/contracts.md` §6).
+    let preset = daemon.preset(&job.preset_id)?;
+    let plan = plan_conversion(&probe, &preset)?;
     let temp = temp_path(&job.output_path, &job.id)?;
     let args = build_ffmpeg_args(&job.input_path, &temp, &plan)?;
 

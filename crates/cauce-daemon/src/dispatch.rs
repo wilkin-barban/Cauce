@@ -18,11 +18,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cauce_core::{
-    DuplicatePolicy, ErrorCode, Job, JobAction, JobError, JobState, MediaSnapshot, Progress,
-    Settings, Timestamp, plan_conversion, resolve_output_path, system_presets, transition_for,
+    CustomPreset, DuplicatePolicy, ErrorCode, Job, JobAction, JobError, JobState, MediaSnapshot,
+    Preset, Progress, Settings, Timestamp, plan_conversion, resolve_output_path, system_presets,
+    transition_for,
 };
 use cauce_ffmpeg::runner::ConversionChild;
 use cauce_jobs::Store;
+use cauce_jobs::store::CustomPresetRead;
 use serde_json::{Value, json};
 
 use crate::events::Events;
@@ -99,7 +101,9 @@ impl Daemon {
     pub fn dispatch(&self, method: &str, params: Option<&Value>) -> Result<Value, JobError> {
         match method {
             "initialize" => self.initialize(params),
-            "presets.list" => protocol::encode(system_presets()),
+            "presets.list" => self.presets_list(),
+            "presets.set_custom" => self.presets_set_custom(params),
+            "presets.clear_custom" => self.presets_clear_custom(),
             "settings.get" => protocol::encode(&self.store_mut().settings_get()?),
             "settings.set" => self.settings_set(params),
             "system.capabilities" => self.capabilities(),
@@ -175,6 +179,49 @@ impl Daemon {
         protocol::encode(&settings)
     }
 
+    /// The thirteen system presets plus, when it is defined, the custom one
+    /// (`docs/contracts.md` §6). A stored value that cannot be used is logged and
+    /// ignored instead of failing the list.
+    fn presets_list(&self) -> Result<Value, JobError> {
+        let mut presets: Vec<Preset> = system_presets().to_vec();
+        match self.store_mut().custom_preset()? {
+            CustomPresetRead::Ready(custom) => presets.push(custom.to_preset()?),
+            CustomPresetRead::Ignored { warning } => {
+                self.events.log("warn", "presets", warning);
+            }
+            CustomPresetRead::Missing => {}
+        }
+        protocol::encode(&presets)
+    }
+
+    /// Stores the one custom preset and answers the resulting `Preset`, so the
+    /// client renders exactly what `presets.list` will return.
+    fn presets_set_custom(&self, params: Option<&Value>) -> Result<Value, JobError> {
+        let params = params.filter(|params| params.is_object()).ok_or_else(|| {
+            protocol::invalid("`presets.set_custom` necesita el objeto del preset.")
+        })?;
+        let custom: CustomPreset = serde_json::from_value(params.clone()).map_err(|error| {
+            protocol::invalid(format!("Preset personalizado inválido: {error}"))
+        })?;
+        // `to_preset` validates the combination first: an invalid one never
+        // reaches the store nor the plan engine.
+        let preset = custom.to_preset()?;
+        self.store_mut().set_custom_preset(&custom)?;
+        self.events
+            .log("info", "presets", "preset personalizado guardado");
+        protocol::encode(&preset)
+    }
+
+    /// Deletes the custom preset; asking twice is not an error (`cleared: false`).
+    fn presets_clear_custom(&self) -> Result<Value, JobError> {
+        let cleared = self.store_mut().clear_custom_preset()?;
+        if cleared {
+            self.events
+                .log("info", "presets", "preset personalizado borrado");
+        }
+        Ok(json!({"cleared": cleared}))
+    }
+
     fn capabilities(&self) -> Result<Value, JobError> {
         let toolchain = cauce_ffmpeg::locate()?;
         let disk = self
@@ -215,8 +262,8 @@ impl Daemon {
     fn media_plan(&self, params: Option<&Value>) -> Result<Value, JobError> {
         let snapshot: MediaSnapshot = protocol::decode(params, "snapshot")?;
         let preset_id = protocol::string_param(params, "preset_id")?;
-        let preset = find_preset(&preset_id)?;
-        protocol::encode(&plan_conversion(&snapshot, preset)?)
+        let preset = self.preset(&preset_id)?;
+        protocol::encode(&plan_conversion(&snapshot, &preset)?)
     }
 
     fn jobs_add(&self, params: Option<&Value>) -> Result<Value, JobError> {
@@ -228,7 +275,7 @@ impl Daemon {
         }
         let output_dir = self.authorize(&protocol::string_param(params, "output_dir")?)?;
         let preset_id = protocol::string_param(params, "preset_id")?;
-        let preset = find_preset(&preset_id)?;
+        let preset = self.preset(&preset_id)?;
         let settings = self.store_mut().settings_get()?;
         let policy = protocol::optional_param(params, "duplicate_policy")?
             .map(|value| {
@@ -268,7 +315,7 @@ impl Daemon {
             let probed_at = utc_now()?;
             let snapshot =
                 cauce_ffmpeg::probe::probe_file(&toolchain, Path::new(&input_path), probed_at)?;
-            let plan = plan_conversion(&snapshot, preset)?;
+            let plan = plan_conversion(&snapshot, &preset)?;
             let output_path = resolve_output_path(
                 &input_path,
                 &output_dir,
@@ -499,6 +546,27 @@ impl Daemon {
     }
 }
 
+/// Resolves a preset id against the system catalog first and then against the
+/// custom preset, so `media.plan`, `jobs.add` and the scheduler share one answer.
+impl Daemon {
+    pub fn preset(&self, id: &str) -> Result<Preset, JobError> {
+        if let Some(system) = system_presets().iter().find(|preset| preset.id == id) {
+            return Ok(system.clone());
+        }
+        let custom = self.store_mut().custom_preset()?;
+        if id == CustomPreset::ID {
+            if let Some(custom) = custom.preset() {
+                return custom.to_preset();
+            }
+        }
+        Err(JobError::new(
+            ErrorCode::PlanInvalid,
+            format!("El preset `{id}` no existe en el catálogo ni entre tus presets."),
+            false,
+        ))
+    }
+}
+
 /// Publishes the depth of the queue (`docs/contracts.md` §7 `queue.updated`).
 pub(crate) fn broadcast_queue(daemon: &Daemon) {
     let counts = {
@@ -512,19 +580,6 @@ pub(crate) fn broadcast_queue(daemon: &Daemon) {
             .events()
             .queue_updated(daemon.events().queue_paused(), running, queued);
     }
-}
-
-pub(crate) fn find_preset(id: &str) -> Result<&'static cauce_core::Preset, JobError> {
-    system_presets()
-        .iter()
-        .find(|preset| preset.id == id)
-        .ok_or_else(|| {
-            JobError::new(
-                ErrorCode::PlanInvalid,
-                format!("El preset `{id}` no existe en el catálogo del sistema."),
-                false,
-            )
-        })
 }
 
 fn utc_now() -> Result<Timestamp, JobError> {

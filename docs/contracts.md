@@ -60,6 +60,22 @@ Un preset contiene identidad, presentación, restricciones y preferencias. El ca
 
 Campos comunes: `id`, `name_es`, `name_en`, `description_es`, `description_en`, `category`, `container`, `video_codec`, `audio_codec`, `video_quality`, `audio_bitrate`, `max_width`, `max_height`, `max_fps`, `pixel_format`, `profile`, `level`, `max_bit_depth`, `hdr_policy`, `subtitle_policy`, `faststart`, `preserve_metadata`, `hardware_preference`, `audio_channels`, `normalize_audio`, `preferred_audio_language`.
 
+#### `CustomPreset`
+
+El único preset propio de v0.1. Se guarda como JSON bajo la clave `custom_preset` de `settings` ([`data-model.md`](data-model.md) §2.5) y se convierte en `Preset` con `id` fijo `custom-1`, `category` `custom` y nombres «Personalizado» / «Custom» / «Personalizado», de modo que `media.plan`, `jobs.add` y el ejecutor no necesitan ningún caso especial. **Guardar reemplaza**: nunca hay más de uno, y no existe un editor genérico.
+
+| Campo | Valores | Regla |
+|---|---|---|
+| `container` | `mp4`, `mkv`, `webm` | Debe transportar el video y el audio elegidos |
+| `video` | `h264`, `h265`, `vp9`, `av1`, `copy`, `none` | `none` elimina la pista de video |
+| `quality` | CRF entero `0-51` o `high`, `medium`, `low` | Un nivel se resuelve a CRF por codificador (H.264 18/23/28, H.265 20/26/30, VP9 24/32/38, AV1 24/30/36); `copy` y `none` no declaran CRF |
+| `resolution` | `original`, `1080p`, `720p`, `480p` | Límite máximo; `original` no limita |
+| `audio` | `aac`, `mp3`, `opus`, `flac`, `copy`, `none` | `none` elimina la pista de audio |
+| `bitrate` | `128`, `192`, `256`, `320` (kbps) o `null` | Prohibido con `audio: copy` y `audio: none`; ausente en un recodificado significa `192` |
+| `subtitles` | `keep`, `remove` | `keep` exige pista de video y de audio |
+
+Combinaciones rechazadas con `INVALID_INPUT` (no reintentable), todas probadas: `mp4` con `vp9`; `webm` con `h264` o `h265`; `webm` con `aac`, `mp3` o `flac`; `bitrate` informado con `audio: copy` o `audio: none`; `subtitles: keep` con `video: none` (sin imagen no hay a dónde asociarlos) o con `audio: none` (el resultado sería solo texto). Un valor de enum desconocido y un CRF fuera de `0-51` se rechazan al deserializar. Un valor guardado que ya no se pueda usar se ignora al leer, con una advertencia en el log: `presets.list` sigue respondiendo los trece del sistema.
+
 ### 2.4 `Job`
 
 | Campo | Tipo | Regla |
@@ -163,7 +179,9 @@ Envolvente de error:
 | `jobs.recover` | `id` | `Job` |
 | `jobs.remove` | `id` | `{removed: bool}` |
 | `queue.pause` / `queue.resume` / `queue.start` | `{}` | `{paused: bool}` |
-| `presets.list` | `{}` | `Preset[]` |
+| `presets.list` | `{}` | `Preset[]` (los trece del sistema y, si existe, `custom-1` al final) |
+| `presets.set_custom` | `CustomPreset` (§2.3) | `Preset` (el `custom-1` resultante) |
+| `presets.clear_custom` | `{}` | `{cleared: bool}` |
 | `settings.get` | `{}` | `Settings` |
 | `settings.set` | `Partial<Settings>` | `Settings` |
 | `system.capabilities` | `{}` | `Capabilities` |

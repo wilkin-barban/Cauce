@@ -9,8 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use cauce_core::{
-    ConversionPlan, DuplicatePolicy, ErrorCode, JobError, Language, MediaSnapshot, Progress,
-    Settings, Theme,
+    ConversionPlan, CustomPreset, DuplicatePolicy, ErrorCode, JobError, Language, MediaSnapshot,
+    Progress, Settings, Theme,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::Value as JsonValue;
@@ -261,4 +261,95 @@ fn probe_user_version(path: &Path) -> Option<u32> {
     }
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
     migrations::user_version(&conn).ok()
+}
+
+// ---------------------------------------------------------------------------
+// The one custom preset (`docs/contracts.md` §2.3, `docs/data-model.md` §2.5).
+//
+// It lives as JSON under the `custom_preset` key of the settings table: one row,
+// one value, replaced by saving. A value that cannot be used never breaks the
+// daemon — the read reports it and the caller logs the warning — and a rejected
+// write never leaves the key behind.
+// ---------------------------------------------------------------------------
+
+/// The settings key of the custom preset (`docs/data-model.md` §2.5).
+pub const CUSTOM_PRESET_KEY: &str = "custom_preset";
+
+const SELECT_SETTING_VALUE: &str = "SELECT value_json FROM settings WHERE key = ?1";
+const DELETE_SETTING: &str = "DELETE FROM settings WHERE key = ?1";
+
+/// What the `custom_preset` key holds right now.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CustomPresetRead {
+    /// The key was never written: the catalog is just the thirteen presets.
+    Missing,
+    /// The key exists but the value cannot be used. The caller ignores it and
+    /// logs `warning`; it never fails the request.
+    Ignored { warning: String },
+    /// A valid custom preset.
+    Ready(CustomPreset),
+}
+
+impl CustomPresetRead {
+    /// The preset, ignoring a value that cannot be used.
+    pub fn preset(self) -> Option<CustomPreset> {
+        match self {
+            Self::Ready(preset) => Some(preset),
+            Self::Missing | Self::Ignored { .. } => None,
+        }
+    }
+}
+
+impl Store {
+    /// Reads the custom preset, ignoring an unreadable or invalid value.
+    ///
+    /// A corrupt row is a leftover, not a reason to refuse `presets.list`, so the
+    /// read succeeds and names the problem instead of returning an error.
+    pub fn custom_preset(&self) -> Result<CustomPresetRead, JobError> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(SELECT_SETTING_VALUE, [CUSTOM_PRESET_KEY], |row| row.get(0))
+            .optional()
+            .map_err(|error| sql_error(error, "leer el preset personalizado"))?;
+        let Some(raw) = raw else {
+            return Ok(CustomPresetRead::Missing);
+        };
+
+        let ignored = |reason: String| CustomPresetRead::Ignored {
+            warning: format!("el preset personalizado guardado no se usa: {reason}"),
+        };
+        let parsed: CustomPreset = match serde_json::from_str(&raw) {
+            Ok(preset) => preset,
+            Err(error) => return Ok(ignored(format!("JSON inválido ({error})"))),
+        };
+        match parsed.validate() {
+            Ok(()) => Ok(CustomPresetRead::Ready(parsed)),
+            Err(error) => Ok(ignored(error.message)),
+        }
+    }
+
+    /// Validates and stores the one custom preset, replacing any previous value.
+    pub fn set_custom_preset(&mut self, preset: &CustomPreset) -> Result<(), JobError> {
+        // The domain judges the combination before a single byte is written, so a
+        // rejected write cannot leave an unusable value behind (`data-model.md` §1).
+        preset.validate()?;
+        let encoded = serde_json::to_string(preset).map_err(json_error)?;
+        let now = migrations::utc_now()?;
+        self.conn
+            .execute(
+                sql::UPSERT_SETTING,
+                params![CUSTOM_PRESET_KEY, encoded, now.as_str()],
+            )
+            .map_err(|error| sql_error(error, "guardar el preset personalizado"))?;
+        Ok(())
+    }
+
+    /// Deletes the custom preset. Reports whether there was one.
+    pub fn clear_custom_preset(&mut self) -> Result<bool, JobError> {
+        let deleted = self
+            .conn
+            .execute(DELETE_SETTING, [CUSTOM_PRESET_KEY])
+            .map_err(|error| sql_error(error, "borrar el preset personalizado"))?;
+        Ok(deleted > 0)
+    }
 }

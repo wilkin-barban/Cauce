@@ -83,7 +83,7 @@ Cada cambio de `jobs.state` se escribe en la misma transacción que el evento.
 | `created_at` | TEXT NOT NULL | UTC |
 | `updated_at` | TEXT NOT NULL | UTC |
 
-Los presets del sistema se siembran desde el catálogo canónico y no se editan. Los personalizados se añaden en v0.2.
+Los presets del sistema se siembran desde el catálogo canónico y no se editan. El único preset personalizado de v0.1 vive en `settings` bajo la clave `custom_preset` (§2.5): una sola fila que se reemplaza al guardar, con `id` fijo `custom-1` y `kind` lógico `custom` según [`contracts.md`](contracts.md) §2.3. La tabla `presets` sigue aceptando `kind = 'custom'` para cuando los personalizados múltiples lleguen en una fase posterior.
 
 ### 2.5 `settings`
 
@@ -94,6 +94,8 @@ Los presets del sistema se siembran desde el catálogo canónico y no se editan.
 | `updated_at` | TEXT NOT NULL | UTC |
 
 Claves iniciales: `output_dir`, `max_concurrent_jobs`, `theme`, `language`, `notifications`, `duplicate_policy`, `keep_temp_on_failure`.
+
+Clave `custom_preset`: el `CustomPreset` serializado ([`contracts.md`](contracts.md) §2.3). Se valida al escribir —una combinación inválida se rechaza con `INVALID_INPUT` y no deja fila— y al leer: un JSON roto o una combinación inválida se ignora con una advertencia en el log, y `settings_get` sigue funcionando porque la clave no forma parte de `Settings`. Guardar reemplaza el valor; `presets.clear_custom` borra la fila.
 
 ### 2.6 `output_reservations`
 

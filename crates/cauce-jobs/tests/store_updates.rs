@@ -11,10 +11,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cauce_core::{
-    ConversionPlan, ErrorCode, Job, JobError, JobState, MediaSnapshot, Progress, Timestamp,
-    plan_conversion, system_presets,
+    ConversionPlan, CustomAudio, CustomBitrate, CustomContainer, CustomPreset, CustomQuality,
+    CustomQualityLevel, CustomResolution, CustomSubtitles, CustomVideo, ErrorCode, Job, JobError,
+    JobState, MediaSnapshot, Progress, Timestamp, plan_conversion, system_presets,
 };
 use cauce_jobs::Store;
+use cauce_jobs::store::CustomPresetRead;
 use uuid::Uuid;
 
 /// A private database directory that cleans itself up.
@@ -379,4 +381,165 @@ fn remove_of_a_missing_job_returns_false() {
         "a missing job is not an error"
     );
     assert_eq!(count(&store, "jobs"), 0);
+}
+
+// The one custom preset lives under the `custom_preset` key of `settings`
+// (`docs/data-model.md` §2.5, `docs/contracts.md` §2.3 and §6).
+
+/// A legal combination: MKV carries H.265, Opus and subtitles.
+fn custom_preset() -> CustomPreset {
+    CustomPreset {
+        container: CustomContainer::Mkv,
+        video: CustomVideo::H265,
+        quality: CustomQuality::Level(CustomQualityLevel::High),
+        resolution: CustomResolution::P1080,
+        audio: CustomAudio::Opus,
+        bitrate: Some(CustomBitrate::K256),
+        subtitles: CustomSubtitles::Keep,
+    }
+}
+
+#[test]
+fn custom_preset_round_trips_through_settings() {
+    let temp = TempDir::new("custom-round-trip");
+    let mut store = Store::open(&temp.db_path()).expect("open");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Missing,
+        "sin guardar, no hay preset personalizado"
+    );
+
+    let custom = custom_preset();
+    store.set_custom_preset(&custom).expect("guardar");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Ready(custom.clone()),
+        "el preset vuelve idéntico"
+    );
+
+    // Saving again replaces it: there is exactly one custom preset.
+    let mut replaced = custom.clone();
+    replaced.video = CustomVideo::Av1;
+    store.set_custom_preset(&replaced).expect("reemplazar");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Ready(replaced),
+        "guardar reemplaza, no acumula"
+    );
+
+    // The key shares the table with the settings and breaks neither direction.
+    let settings = store.settings_get().expect("los ajustes siguen legibles");
+    assert_eq!(settings.max_concurrent_jobs, 1);
+    store
+        .settings_set(&settings)
+        .expect("los ajustes se guardan");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Ready(custom_preset_with_av1()),
+        "escribir los ajustes no borra el preset personalizado"
+    );
+
+    // Clearing removes it and clearing again is not an error.
+    assert!(store.clear_custom_preset().expect("borrar"), "había uno");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Missing
+    );
+    assert!(
+        !store.clear_custom_preset().expect("borrar de nuevo"),
+        "borrar dos veces no inventa un borrado"
+    );
+}
+
+fn custom_preset_with_av1() -> CustomPreset {
+    let mut replaced = custom_preset();
+    replaced.video = CustomVideo::Av1;
+    replaced
+}
+
+#[test]
+fn invalid_custom_preset_is_rejected_on_write() {
+    let temp = TempDir::new("custom-invalid");
+    let mut store = Store::open(&temp.db_path()).expect("open");
+
+    // MP4 does not carry VP9.
+    let mut invalid = custom_preset();
+    invalid.container = CustomContainer::Mp4;
+    invalid.video = CustomVideo::Vp9;
+    let error = store
+        .set_custom_preset(&invalid)
+        .expect_err("una combinación inválida no se guarda");
+    assert_eq!(error.code, ErrorCode::InvalidInput, "{error:?}");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Missing,
+        "un rechazo no deja fila escrita"
+    );
+
+    // A bitrate with no audio track is the same class of error.
+    let mut silent = custom_preset();
+    silent.audio = CustomAudio::None;
+    silent.subtitles = CustomSubtitles::Remove;
+    assert!(store.set_custom_preset(&silent).is_err());
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Missing
+    );
+}
+
+#[test]
+fn corrupt_custom_preset_is_ignored_on_read() {
+    let temp = TempDir::new("custom-corrupt");
+    let mut store = Store::open(&temp.db_path()).expect("open");
+    let write_raw = |store: &Store, raw: &str| {
+        store
+            .connection()
+            .execute(
+                "INSERT INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3) \
+                 ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+                rusqlite::params!["custom_preset", raw, "2026-11-14T10:00:00Z"],
+            )
+            .expect("escribir la fila cruda");
+    };
+
+    // Broken JSON: ignored, with a warning that says why.
+    write_raw(&store, "{esto no es json");
+    match store.custom_preset().expect("leer no falla") {
+        CustomPresetRead::Ignored { warning } => {
+            assert!(
+                !warning.trim().is_empty(),
+                "la advertencia explica el motivo"
+            );
+        }
+        other => panic!("se esperaba un preset ignorado, llegó {other:?}"),
+    }
+
+    // Valid JSON with an invalid combination: ignored as well.
+    write_raw(
+        &store,
+        r#"{"container":"webm","video":"h264","quality":"high","resolution":"original",
+            "audio":"opus","bitrate":192,"subtitles":"keep"}"#,
+    );
+    match store.custom_preset().expect("leer no falla") {
+        CustomPresetRead::Ignored { warning } => {
+            assert!(
+                warning.contains("webm") || warning.contains("h264"),
+                "la advertencia nombra la combinación: {warning}"
+            );
+        }
+        other => panic!("se esperaba un preset ignorado, llegó {other:?}"),
+    }
+
+    // The rest of the settings still load: a corrupt value never breaks the app.
+    let settings = store.settings_get().expect("los ajustes siguen legibles");
+    assert_eq!(settings.max_concurrent_jobs, 1);
+
+    // A valid row replaces the corrupt one and reads back.
+    store
+        .set_custom_preset(&custom_preset())
+        .expect("guardar encima");
+    assert_eq!(
+        store.custom_preset().expect("read"),
+        CustomPresetRead::Ready(custom_preset())
+    );
 }

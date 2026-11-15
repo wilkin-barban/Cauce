@@ -647,3 +647,199 @@ fn logs_list_returns_recent_entries() {
         "`limit` se respeta"
     );
 }
+
+// The one custom preset over IPC (`docs/contracts.md` §2.3, §6 and §8).
+
+/// A legal combination: MP4 with H.264, AAC and no subtitles.
+fn custom_params() -> Value {
+    json!({
+        "container": "mp4",
+        "video": "h264",
+        "quality": "high",
+        "resolution": "1080p",
+        "audio": "aac",
+        "bitrate": 192,
+        "subtitles": "remove",
+    })
+}
+
+#[test]
+fn presets_list_includes_the_custom_preset_once_saved() {
+    let mut case = Case::new("custom-list");
+    let system = case.client.result("presets.list", json!({}));
+    assert_eq!(
+        system.as_array().map(Vec::len),
+        Some(13),
+        "sin preset personalizado la lista sigue siendo el catálogo del sistema"
+    );
+
+    let saved = case.client.result("presets.set_custom", custom_params());
+    assert_eq!(saved["id"], json!("custom-1"));
+    assert_eq!(saved["category"], json!("custom"));
+    assert_eq!(saved["name_es"], json!("Personalizado"));
+    assert_eq!(saved["name_en"], json!("Custom"));
+    assert_eq!(saved["container"], json!("mp4"));
+    assert_eq!(saved["video_codec"], json!("h264"));
+    assert_eq!(saved["audio_codec"], json!("aac"));
+    assert_eq!(saved["video_quality"], json!(18), "«alta» en libx264");
+    assert_eq!(saved["audio_bitrate"], json!("192k"));
+    assert_eq!(saved["max_width"], json!(1920));
+    assert_eq!(saved["max_height"], json!(1080));
+    assert_eq!(saved["faststart"], json!(true));
+
+    let list = case.client.result("presets.list", json!({}));
+    let ids: Vec<String> = list
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|preset| preset["id"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(ids.len(), 14, "trece del sistema y uno propio");
+    assert_eq!(ids[13], "custom-1", "el personalizado va al final");
+
+    // Saving again replaces: there is exactly one.
+    let mut replaced = custom_params();
+    replaced["video"] = json!("h265");
+    let saved = case.client.result("presets.set_custom", replaced);
+    assert_eq!(saved["video_codec"], json!("h265"));
+    let list = case.client.result("presets.list", json!({}));
+    assert_eq!(
+        list.as_array().map(Vec::len),
+        Some(14),
+        "sigue habiendo uno"
+    );
+
+    let cleared = case.client.result("presets.clear_custom", json!({}));
+    assert_eq!(cleared, json!({"cleared": true}));
+    let list = case.client.result("presets.list", json!({}));
+    assert_eq!(
+        list.as_array().map(Vec::len),
+        Some(13),
+        "vuelve al catálogo"
+    );
+    let cleared = case.client.result("presets.clear_custom", json!({}));
+    assert_eq!(
+        cleared,
+        json!({"cleared": false}),
+        "no había nada que borrar"
+    );
+}
+
+#[test]
+fn presets_set_custom_rejects_an_invalid_combination() {
+    let mut case = Case::new("custom-invalid");
+
+    // MP4 does not carry VP9.
+    let mut invalid = custom_params();
+    invalid["container"] = json!("mp4");
+    invalid["video"] = json!("vp9");
+    let code = case
+        .client
+        .error_code("presets.set_custom", invalid.clone());
+    assert_eq!(code, "INVALID_INPUT", "la combinación se rechaza acá");
+
+    // WebM carries Opus only.
+    let mut webm = custom_params();
+    webm["container"] = json!("webm");
+    webm["video"] = json!("vp9");
+    webm["audio"] = json!("aac");
+    assert_eq!(
+        case.client.error_code("presets.set_custom", webm),
+        "INVALID_INPUT"
+    );
+
+    // An unknown enum value never reaches the domain.
+    let mut unknown = custom_params();
+    unknown["video"] = json!("mpeg4");
+    assert_eq!(
+        case.client.error_code("presets.set_custom", unknown),
+        "INVALID_INPUT"
+    );
+
+    // Nothing was stored by any of the rejections.
+    let list = case.client.result("presets.list", json!({}));
+    assert_eq!(list.as_array().map(Vec::len), Some(13));
+}
+
+#[test]
+fn a_job_plans_and_runs_with_the_custom_preset() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("custom-run");
+    let config = cauce_daemon::orchestrator::config_for(&case.daemon).expect("configuración");
+
+    // First: the requested combination. The fixture is already H.264/AAC, so the
+    // plan is a copy inside MP4 — the custom preset still reaches the engine.
+    case.client.result("presets.set_custom", custom_params());
+    let job = case.add_one_job(&fixture, "custom-1");
+    assert_eq!(job["preset_id"], json!("custom-1"));
+    assert_eq!(job["plan"]["container"], json!("mp4"));
+    assert_eq!(
+        job["plan"]["subtitles"]["action"],
+        json!("remove"),
+        "el preset personalizado no conserva subtítulos: {}",
+        job["plan"]
+    );
+    assert_eq!(job["plan"]["faststart"], json!(true), "MP4 usa faststart");
+    let id = job["id"].as_str().expect("id").to_owned();
+    run_to_completion(&mut case, &id, &config);
+    assert_output(&mut case, &id, "h264", "aac", "mp4");
+
+    // Second: a combination that forces both streams to be re-encoded, so the
+    // scheduler really resolves the custom preset and FFmpeg really runs.
+    let mut transcoded = custom_params();
+    transcoded["container"] = json!("mkv");
+    transcoded["video"] = json!("h265");
+    transcoded["audio"] = json!("opus");
+    transcoded["subtitles"] = json!("keep");
+    case.client.result("presets.set_custom", transcoded);
+    let job = case.add_one_job(&fixture, "custom-1");
+    assert_eq!(job["plan"]["container"], json!("mkv"));
+    assert_eq!(job["plan"]["video"]["encoder"], json!("libx265"));
+    assert_eq!(job["plan"]["audio"]["encoder"], json!("libopus"));
+    let id = job["id"].as_str().expect("id").to_owned();
+    run_to_completion(&mut case, &id, &config);
+    assert_output(&mut case, &id, "hevc", "opus", "mkv");
+}
+
+/// Drives the scheduler by hand until `id` is terminal: this case asserts the
+/// conversion, not the tick loop.
+fn run_to_completion(case: &mut Case, id: &str, config: &cauce_daemon::OrchestratorConfig) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let current = case.client.result("jobs.get", json!({"id": id}));
+        match current["state"].as_str().unwrap_or_default() {
+            "completed" => return,
+            "failed" | "cancelled" => {
+                panic!("el trabajo con preset propio no completó: {current}")
+            }
+            _ => {}
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "el trabajo no terminó: {current}"
+        );
+        cauce_daemon::orchestrator::tick(&case.daemon, config).expect("tick");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// `media.inspect` is `ffprobe` on the published file.
+fn assert_output(case: &mut Case, id: &str, video: &str, audio: &str, container: &str) {
+    let job = case.client.result("jobs.get", json!({"id": id}));
+    assert!(job["error"].is_null(), "un trabajo completo no lleva error");
+    let output = PathBuf::from(job["output_path"].as_str().expect("salida"));
+    let published = std::fs::metadata(&output).expect("la salida existe");
+    assert_ne!(published.len(), 0, "la salida no está vacía");
+
+    let snapshot = case.inspect_fixture(&output);
+    assert_eq!(snapshot["container"], json!(container), "{snapshot}");
+    assert_eq!(snapshot["video_streams"][0]["codec"], json!(video));
+    assert_eq!(snapshot["audio_streams"][0]["codec"], json!(audio));
+    let duration = snapshot["duration_ms"].as_u64().unwrap_or(0);
+    assert!(
+        (1_900..=2_100).contains(&duration),
+        "la duración se conserva: {duration} ms"
+    );
+}
