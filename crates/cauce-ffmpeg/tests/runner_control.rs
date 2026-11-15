@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use cauce_core::{ErrorCode, Progress};
+use cauce_core::{ErrorCode, JobError, Progress};
 use cauce_ffmpeg::runner::{ConversionChild, spawn};
 
 /// Temporary directory that removes itself, so the fakes leave nothing behind.
@@ -21,7 +21,21 @@ struct TempDir {
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("cauce-t10-{tag}-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        // Tests run in parallel threads inside one process: a per-process path is
+        // shared state, and one test executing a script another test is still
+        // writing yields ETXTBSY ("Text file busy"). Every test gets its own dir.
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos())
+            .unwrap_or_default();
+        let path = std::env::temp_dir().join(format!(
+            "cauce-t10-{tag}-{}-{unique}-{nanos}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("the test temp dir must be creatable");
         Self { path }
@@ -34,10 +48,13 @@ impl TempDir {
     fn script(&self, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
+        // Write aside and rename atomically, so exec never sees a partial file.
         let path = self.path.join("fake-ffmpeg");
-        fs::write(&path, body).expect("the fake binary must be writable");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+        let staged = self.path.join("fake-ffmpeg.staged");
+        fs::write(&staged, body).expect("the fake binary must be writable");
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))
             .expect("the fake binary must be executable");
+        fs::rename(&staged, &path).expect("the fake binary must be published atomically");
         path
     }
 }
@@ -75,8 +92,33 @@ fn fake(dir: &TempDir, with_grandchild: bool) -> Fake {
 }
 
 fn start(script: &Path) -> ConversionChild {
-    spawn(script, &[], 0, Box::new(|_| {}), Box::new(|_| {}))
+    spawn_sh(script, &[], 0, Box::new(|_| {}), Box::new(|_| {}))
         .unwrap_or_else(|error| panic!("spawning {} failed: {error:?}", script.display()))
+}
+
+/// Runs a fake through `/bin/sh` instead of exec'ing the script directly.
+///
+/// Linux answers `ETXTBSY` ("Text file busy") when a file that was just written
+/// is executed while another thread still holds a descriptor to it, which makes
+/// a script-based test flaky under parallel load. `/bin/sh` is a stable binary,
+/// and everything under test (signals, process groups, throttling) behaves the
+/// same. The `#!/bin/bash` header of the fakes is simply ignored.
+fn spawn_sh(
+    script: &Path,
+    args: &[String],
+    total_ms: u64,
+    on_progress: Box<dyn FnMut(Progress) + Send>,
+    on_stderr: Box<dyn FnMut(&str) + Send>,
+) -> Result<ConversionChild, JobError> {
+    let mut argv = vec![script.display().to_string()];
+    argv.extend(args.iter().cloned());
+    spawn(
+        Path::new("/bin/sh"),
+        &argv,
+        total_ms,
+        on_progress,
+        on_stderr,
+    )
 }
 
 /// Polls `probe` until it returns something, for at most five seconds.
@@ -252,7 +294,7 @@ fn throttles_progress_to_two_per_second() {
         recorded.lock().expect("the sample list").push(progress);
     });
 
-    let mut child = spawn(&script, &[], 400_000, on_progress, Box::new(|_| {}))
+    let mut child = spawn_sh(&script, &[], 400_000, on_progress, Box::new(|_| {}))
         .expect("the fake binary must spawn");
     assert!(child.wait().expect("the fake binary exits 0").success());
 
@@ -290,7 +332,7 @@ fn forwards_stderr_lines_truncated_to_four_kibibytes() {
     });
 
     let mut child =
-        spawn(&script, &[], 0, Box::new(|_| {}), on_stderr).expect("the fake binary must spawn");
+        spawn_sh(&script, &[], 0, Box::new(|_| {}), on_stderr).expect("the fake binary must spawn");
     child.wait().expect("the fake binary exits 0");
 
     let lines = lines.lock().expect("the line list");
