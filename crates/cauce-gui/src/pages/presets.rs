@@ -54,6 +54,14 @@ pub const CUSTOM_CATEGORY: &str = "custom";
 /// Read-only notice, the only action the system groups do not offer.
 const READ_ONLY: &str = "presets.read_only";
 
+/// The name of the custom preset as a row and a panel title: «Mi preset»,
+/// «My preset», «Meu preset». Deliberately not the group name, which stays on the
+/// chip and on the category header (`odd/screenshots/07-presets-custom.png`).
+const CUSTOM_ROW: &str = "presets.custom_row_name";
+
+/// One sentence that explains the custom group.
+const CUSTOM_HINT: &str = "presets.custom_hint";
+
 /// The chips of the navigator above the list: one per group plus «Todas».
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetFilter {
@@ -139,6 +147,34 @@ pub fn filter_presets(presets: &[Preset], filter: PresetFilter) -> Vec<&Preset> 
             .collect(),
         None => presets.iter().collect(),
     }
+}
+
+/// The name of the custom preset where a row or a panel title names it: distinct
+/// from the group header, so the list row does not repeat what the header and the
+/// chip already say.
+pub fn custom_row_label() -> &'static str {
+    t(CUSTOM_ROW)
+}
+
+/// The one heading pair the custom panel shows: its title and its description.
+/// The editor below renders no heading of its own ([`custom_editor_heading`]),
+/// which is the structural reason «Personalizado» and its sentence cannot appear
+/// twice in the panel (`odd/screenshots/07-presets-custom.png`).
+///
+/// `None` means the panel shows no such line, so a caller never renders an empty
+/// label: the pair is what `show_custom` writes, in this order.
+pub fn custom_headers() -> (Option<&'static str>, Option<&'static str>) {
+    (Some(custom_row_label()), Some(t(CUSTOM_HINT)))
+}
+
+/// The heading the editor's own preferences group renders: none, by design.
+///
+/// The panel header above already carries the title and the description of the
+/// custom group; letting the editor repeat them is what duplicated them
+/// (`odd/screenshots/07-presets-custom.png`). Returning `None` keeps that a data
+/// decision the contract tests can hold, instead of a style tweak.
+pub fn custom_editor_heading() -> (Option<&'static str>, Option<&'static str>) {
+    (None, None)
 }
 
 /// Header of one category; an unknown category keeps its own name.
@@ -822,8 +858,15 @@ fn chips(group: &adw::ToggleGroup) -> gtk::ScrolledWindow {
 /// selected. Every row carries its own label from the catalogs.
 fn build_editor() -> Editor {
     let group = adw::PreferencesGroup::new();
-    group.set_title(t("presets.group_custom"));
-    group.set_description(Some(t("presets.custom_hint")));
+    // The seven rows and nothing else: the heading and the sentence belong to the
+    // panel above, which shows them once ([`custom_editor_heading`]).
+    let (heading, description) = custom_editor_heading();
+    if let Some(heading) = heading {
+        group.set_title(heading);
+    }
+    if let Some(description) = description {
+        group.set_description(Some(description));
+    }
 
     let container = combo("presets.detail_container");
     let video = combo("presets.detail_video_codec");
@@ -1129,7 +1172,13 @@ fn header_row(category: &str) -> gtk::ListBoxRow {
 
 fn preset_row(preset: &Preset) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    let name = localized_preset_name(preset);
+    // The one preset the user owns does not carry the group name as a row label:
+    // the header above the row already says «Personalizado»
+    // (`odd/screenshots/07-presets-custom.png`).
+    let name = match preset.category.as_str() {
+        CUSTOM_CATEGORY => custom_row_label(),
+        _ => localized_preset_name(preset),
+    };
     row.set_title(&escaped(name));
     // One line per row: a wrapped title made the selected row taller than the rest
     // and pushed the list out of alignment (`L43`).
@@ -1149,9 +1198,9 @@ fn preset_row(preset: &Preset) -> adw::ActionRow {
 /// The row of an empty «Personalizado» group: it opens the editor on defaults.
 fn placeholder_row() -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&escaped(t("presets.group_custom")));
+    row.set_title(&escaped(custom_row_label()));
     row.set_title_lines(1);
-    row.set_subtitle(&escaped(t("presets.custom_hint")));
+    row.set_subtitle(&escaped(t(CUSTOM_HINT)));
     row.set_subtitle_lines(1);
     row.set_widget_name(CustomPreset::ID);
     row
@@ -1175,24 +1224,24 @@ fn show_system(ui: &Ui, preset: &Preset) {
     fill_detail(ui, preset);
 }
 
-/// The detail pane of the custom preset: the same titles plus the editor.
+/// The detail pane of the custom preset: one title, one description and the
+/// editor. The heading pair comes from [`custom_headers`] in both states — no
+/// saved preset and a saved one — so the words are never said twice.
 fn show_custom(ui: &Ui, preset: Option<&Preset>) {
     ui.editor.area.set_visible(true);
     ui.notice.set_visible(false);
     ui.editor.status.set_visible(false);
     clear_failure(&ui.editor.failure);
+    let (title, description) = custom_headers();
+    ui.title.set_label(title.unwrap_or_default());
+    ui.description.set_label(description.unwrap_or_default());
     match preset {
         Some(preset) => {
-            ui.title.set_label(localized_preset_name(preset));
-            ui.description
-                .set_label(localized_preset_description(preset));
             fill_detail(ui, preset);
             ui.editor.apply(CustomDraft::from_preset(preset));
             ui.editor.delete.set_sensitive(true);
         }
         None => {
-            ui.title.set_label(t("presets.group_custom"));
-            ui.description.set_label(t("presets.custom_hint"));
             ui.essentials.set_visible(false);
             ui.technical.set_visible(false);
             ui.editor.apply(CustomDraft::defaults());

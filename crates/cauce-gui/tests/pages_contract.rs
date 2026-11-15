@@ -15,8 +15,9 @@ use cauce_core::{
 use cauce_gui::pages::convert::flows::preset_choices;
 use cauce_gui::pages::diagnostics::{capabilities_report, human_bytes};
 use cauce_gui::pages::presets::{
-    CUSTOM_CATEGORY, CustomDraft, PresetFilter, category_label, filter_presets, filters_in_order,
-    group_presets, preset_detail, preset_essentials,
+    CUSTOM_CATEGORY, CustomDraft, PresetFilter, category_label, custom_editor_heading,
+    custom_headers, custom_row_label, filter_presets, filters_in_order, group_presets,
+    preset_detail, preset_essentials,
 };
 use cauce_gui::pages::settings::{
     SettingsEdit, edit_params, output_dir_to_show, settings_after_edit, theme_from_str,
@@ -557,6 +558,40 @@ fn custom_group_is_last() {
         1,
         "el personalizado no se repite en otro grupo"
     );
+}
+
+#[test]
+fn custom_detail_has_one_title_and_one_description() {
+    // The panel of the custom group is fed by exactly two heading sources: its own
+    // header and the editor's preferences group. Only the first one may speak.
+    let (panel_title, panel_description) = custom_headers();
+    let (editor_title, editor_description) = custom_editor_heading();
+    let titles: Vec<&str> = [panel_title, editor_title].into_iter().flatten().collect();
+    let descriptions: Vec<&str> = [panel_description, editor_description]
+        .into_iter()
+        .flatten()
+        .collect();
+
+    assert_eq!(
+        titles,
+        ["Mi preset"],
+        "el panel del preset propio tiene un solo título"
+    );
+    assert_eq!(
+        descriptions,
+        ["Un solo preset propio: al guardar reemplaza al anterior."],
+        "y una sola descripción"
+    );
+    assert_ne!(titles[0], descriptions[0], "el título no repite la frase");
+
+    // The group name lives on the chip and on the category header; the row and
+    // the panel title say the preset is the user's own.
+    let chip = PresetFilter::Custom.label();
+    let header = category_label(CUSTOM_CATEGORY);
+    let row = custom_row_label();
+    assert_eq!(chip, header, "el chip conserva el nombre del grupo");
+    assert_eq!(row, titles[0], "la fila y el título dicen lo mismo");
+    assert_ne!(row, header, "la fila no repite la cabecera");
 }
 
 #[test]

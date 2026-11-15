@@ -238,6 +238,7 @@ pub const ENTRIES: &[(&str, &str)] = &[
     ("presets.custom_quality_low", "Baixa"),
     ("presets.custom_quality_medium", "Média"),
     ("presets.custom_resolution_original", "Original"),
+    ("presets.custom_row_name", "Meu preset"),
     ("presets.custom_save", "Salvar"),
     ("presets.custom_saved", "Preset personalizado salvo."),
     ("presets.custom_subtitles_keep", "Manter"),
