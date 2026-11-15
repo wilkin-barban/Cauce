@@ -21,7 +21,7 @@ use super::state::{
     ConvertPhase, ConvertState, FFMPEG_COMMAND, RejectedInput, base_name, summarize,
 };
 use crate::client::Client;
-use crate::i18n::{localized_preset_description, localized_preset_name, t};
+use crate::i18n::{localized_preset_description, localized_preset_name, t, t_with};
 use crate::pages::{self, ErrorSurface, error_surface};
 
 /// Catalog key of the drop zone (`docs/ui-mvp.md` §4). The key, not the sentence:
@@ -46,6 +46,11 @@ pub struct Ui {
     pub drop_card: gtk::Button,
     pub add_files: gtk::Button,
     pub add_folder: gtk::Button,
+    pub selection_box: gtk::Box,
+    pub selection_heading: gtk::Label,
+    pub selection_size: gtk::Label,
+    pub clear_all: gtk::Button,
+    pub summary_label: gtk::Label,
     pub files_list: gtk::ListBox,
     pub rejected_list: gtk::ListBox,
     pub rejected_box: gtk::Box,
@@ -62,7 +67,9 @@ pub struct Ui {
     pub plan_details: gtk::Expander,
     pub plan_details_line: gtk::Label,
     pub plan_reasons: gtk::Box,
+    pub confirm_box: gtk::Box,
     pub confirm_label: gtk::Label,
+    pub open_queue: gtk::Button,
     pub queue_button: gtk::Button,
     pub stack: gtk::Stack,
     pub blocked: adw::StatusPage,
@@ -88,6 +95,24 @@ impl Ui {
         actions.append(&add_folder);
 
         let files_list = readable_list();
+        // The selection header: what will be queued, how big it is, and the one
+        // action that empties it (`docs/ui-mvp.md` §4).
+        let selection_heading = text_line("heading");
+        selection_heading.set_widget_name("selection-heading");
+        let selection_size = text_line("dim-label");
+        selection_size.set_widget_name("selection-size");
+        let clear_all = gtk::Button::with_label(t("convert.clear_selection"));
+        clear_all.set_widget_name("selection-clear-all");
+        clear_all.add_css_class("flat");
+        let selection_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        selection_spacer.set_hexpand(true);
+        let selection_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        selection_box.set_widget_name("selection-header");
+        selection_box.append(&selection_heading);
+        selection_box.append(&selection_size);
+        selection_box.append(&selection_spacer);
+        selection_box.append(&clear_all);
+        selection_box.set_visible(false);
         let rejected_list = readable_list();
         let rejected_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
         rejected_box.append(&heading(t("convert.rejected")));
@@ -158,6 +183,22 @@ impl Ui {
 
         let confirm_label = text_line("success");
         confirm_label.set_visible(false);
+        // The confirmation names the count and offers the way to the list, so the
+        // selection is never cleared in silence (`docs/ui-mvp.md` §4).
+        let open_queue = gtk::Button::with_label(t("convert.open_queue"));
+        open_queue.set_widget_name("open-queue");
+        open_queue.add_css_class("pill");
+        let confirm_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        confirm_box.set_widget_name("queue-confirmation");
+        confirm_box.append(&confirm_label);
+        confirm_box.append(&open_queue);
+        confirm_box.set_visible(false);
+
+        // The unmistakable line before the CTA: the count, the preset and the
+        // folder, or which of the two is missing.
+        let summary_label = text_line("dim-label");
+        summary_label.set_widget_name("selection-summary");
+        summary_label.set_visible(false);
 
         let queue_button = gtk::Button::with_label(t("convert.queue_button"));
         queue_button.set_widget_name("queue-cta");
@@ -189,6 +230,7 @@ impl Ui {
         body.append(&drop_card);
         body.append(&actions);
         body.append(&inspecting);
+        body.append(&selection_box);
         body.append(&files_list);
         body.append(&phase_label);
         body.append(&rejected_box);
@@ -196,7 +238,8 @@ impl Ui {
         body.append(&output_group);
         body.append(&preset_group);
         body.append(&plan_box);
-        body.append(&confirm_label);
+        body.append(&summary_label);
+        body.append(&confirm_box);
         body.append(&queue_button);
 
         // Same card width as Ajustes and Diagnóstico, whose `AdwPreferencesPage`
@@ -225,6 +268,11 @@ impl Ui {
             drop_card,
             add_files,
             add_folder,
+            selection_box,
+            selection_heading,
+            selection_size,
+            clear_all,
+            summary_label,
             files_list,
             rejected_list,
             rejected_box,
@@ -241,7 +289,9 @@ impl Ui {
             plan_details,
             plan_details_line,
             plan_reasons,
+            confirm_box,
             confirm_label,
+            open_queue,
             queue_button,
             stack,
             blocked,
@@ -374,10 +424,25 @@ fn ellipsize_labels(widget: &gtk::Widget, selected: &str) {
     }
 }
 
-pub fn file_row(snapshot: &MediaSnapshot) -> adw::ActionRow {
+pub fn file_row(snapshot: &MediaSnapshot, remove: &Rc<dyn Fn(String)>) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&base_name(&snapshot.path));
+    let name = base_name(&snapshot.path);
+    row.set_title(&name);
     row.set_subtitle(&summarize(snapshot));
+
+    // One removal per row, by name, so the list explains itself without a
+    // selection mode (`docs/ui-mvp.md` §4 and §10).
+    let label = t_with("convert.remove_named", "{name}", &name);
+    let button = gtk::Button::with_label(t("convert.remove_file"));
+    button.add_css_class("flat");
+    button.set_tooltip_text(Some(&label));
+    button.update_property(&[gtk::accessible::Property::Label(&label)]);
+    button.connect_clicked({
+        let path = snapshot.path.clone();
+        let remove = Rc::clone(remove);
+        move |_| remove(path.clone())
+    });
+    row.add_suffix(&button);
     row
 }
 
@@ -394,13 +459,45 @@ pub fn refresh(
     ui: &Ui,
     state: &Rc<RefCell<ConvertState>>,
     presets: &Rc<RefCell<Vec<Preset>>>,
+    remove: &Rc<dyn Fn(String)>,
 ) -> Rc<dyn Fn()> {
     let (ui, state, presets) = (ui.clone(), Rc::clone(state), Rc::clone(presets));
+    let remove = Rc::clone(remove);
     Rc::new(move || {
         let state = state.borrow();
         clear(&ui.files_list);
         for snapshot in state.accepted() {
-            ui.files_list.append(&file_row(snapshot));
+            ui.files_list.append(&file_row(snapshot, &remove));
+        }
+        // The header counts and sizes the selection, and disappears with it.
+        let count = state.accepted_count();
+        ui.selection_box.set_visible(count > 0);
+        ui.selection_heading.set_label(&state.selection_heading());
+        ui.selection_size
+            .set_label(&crate::pages::diagnostics::human_bytes(
+                state.accepted_total_bytes(),
+            ));
+        // The line before the CTA names the preset and the folder, or the piece
+        // that is missing.
+        let preset_name = state.preset_id().and_then(|id| {
+            presets
+                .borrow()
+                .iter()
+                .find(|preset| preset.id == id)
+                .map(|preset| localized_preset_name(preset).to_owned())
+        });
+        ui.summary_label.set_label(
+            &state
+                .summary_line()
+                .with_preset(preset_name.as_deref())
+                .sentence(),
+        );
+        ui.summary_label.set_visible(count > 0);
+        // The confirmation of the last `jobs.add`, with the way to the queue.
+        let confirmation = state.confirmation();
+        ui.confirm_box.set_visible(confirmation.is_some());
+        if confirmation.is_some() {
+            ui.confirm_label.set_label(&state.confirmation_sentence());
         }
         clear(&ui.rejected_list);
         for rejected in state.rejected() {

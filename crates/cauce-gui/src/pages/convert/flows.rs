@@ -22,16 +22,48 @@ use crate::client::Client;
 use crate::i18n::{human_error, localized_preset_name, t};
 
 /// Connects every interaction of the page and loads the daemon's first answers.
+///
+/// A render is the repaint the row handlers call after the state changed; it is
+/// stored behind a slot because the rows that carry the handler are built by the
+/// very render the handler needs.
+type Redraw = Rc<dyn Fn()>;
+type RedrawSlot = Rc<RefCell<Option<Redraw>>>;
+
 pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
     let presets: Rc<RefCell<Vec<Preset>>> = Rc::new(RefCell::new(Vec::new()));
-    let refresh = view::refresh(ui, state, &presets);
+    // One removal per row and the plan preview both repaint, and the removal is
+    // built into the rows that repaint, so the two live behind a slot the same way
+    // the Cola page keeps its row handlers.
+    let redraw: RedrawSlot = Rc::new(RefCell::new(None));
+    let remove = removal_handle(state, &redraw);
+    let refresh = view::refresh(ui, state, &presets, &remove);
     let run_plan = plan_handle(ui, client, state);
+    *redraw.borrow_mut() = Some({
+        let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
+        Rc::new(move || {
+            refresh();
+            run_plan();
+        })
+    });
     let run_inspect = inspect_handle(client, state, &refresh, &run_plan);
     let add_paths = add_handle(state, &refresh, &run_inspect);
-    let run_queue = queue_handle(ui, client, state, &refresh, &run_plan);
+    let run_queue = queue_handle(client, state, &refresh, &run_plan);
     let reload_presets = presets_handle(ui, client, state, &presets, &refresh, &run_plan);
     let open_files = picker_handle(ui, &add_paths, false);
     let open_folder = picker_handle(ui, &add_paths, true);
+
+    ui.clear_all.connect_clicked({
+        let (state, refresh, run_plan) =
+            (Rc::clone(state), Rc::clone(&refresh), Rc::clone(&run_plan));
+        move |_| {
+            state.borrow_mut().clear_all();
+            refresh();
+            run_plan();
+        }
+    });
+    ui.open_queue.connect_clicked(|button| {
+        crate::pages::open_section(button, "queue");
+    });
 
     for button in [&ui.drop_card, &ui.add_files] {
         let open_files = Rc::clone(&open_files);
@@ -265,6 +297,18 @@ fn inspect_handle(
     })
 }
 
+/// Removes one accepted file and repaints; the plan is previewed again for the
+/// file that is now first.
+fn removal_handle(state: &Rc<RefCell<ConvertState>>, redraw: &RedrawSlot) -> Rc<dyn Fn(String)> {
+    let (state, redraw) = (Rc::clone(state), Rc::clone(redraw));
+    Rc::new(move |path: String| {
+        state.borrow_mut().removal(&path);
+        if let Some(redraw) = redraw.borrow().as_ref() {
+            redraw();
+        }
+    })
+}
+
 fn add_handle(
     state: &Rc<RefCell<ConvertState>>,
     refresh: &Rc<dyn Fn()>,
@@ -279,22 +323,22 @@ fn add_handle(
     })
 }
 
-/// `jobs.add` with every accepted input, then clear the selection.
+/// `jobs.add` with every accepted input, then a confirmation that names the count
+/// and points at the queue: the selection is never cleared in silence.
 fn queue_handle(
-    ui: &Ui,
     client: &Rc<Client>,
     state: &Rc<RefCell<ConvertState>>,
     refresh: &Rc<dyn Fn()>,
     run_plan: &Rc<dyn Fn()>,
 ) -> Rc<dyn Fn()> {
-    let (ui, client, state) = (ui.clone(), Rc::clone(client), Rc::clone(state));
+    let (client, state) = (Rc::clone(client), Rc::clone(state));
     let (refresh, run_plan) = (Rc::clone(refresh), Rc::clone(run_plan));
     Rc::new(move || {
         let Some(request) = state.borrow_mut().take_queue_request() else {
             return;
         };
         refresh();
-        let (ui, client, state) = (ui.clone(), Rc::clone(&client), Rc::clone(&state));
+        let (client, state) = (Rc::clone(&client), Rc::clone(&state));
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         glib::spawn_future_local(async move {
             let expected = request.inputs.len();
@@ -307,13 +351,7 @@ fn queue_handle(
                 Ok(value) => {
                     let count = serde_json::from_value::<Vec<Job>>(value)
                         .map_or(expected, |jobs| jobs.len());
-                    state.borrow_mut().clear();
-                    ui.confirm_label.set_label(&crate::i18n::t_with(
-                        "convert.added_jobs",
-                        "{n}",
-                        &count.to_string(),
-                    ));
-                    ui.confirm_label.set_visible(true);
+                    state.borrow_mut().confirm_queue(count);
                     run_plan();
                 }
                 Err(error) => state.borrow_mut().set_failure(&error),

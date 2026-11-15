@@ -59,6 +59,10 @@ pub fn wire(client: &Rc<Client>, ui: &Ui) {
         let toggle = toggle_handle(ui, client, &state, &render);
         move |_| toggle()
     });
+    ui.clear_button.connect_clicked({
+        let clear = clear_handle(ui, client, &state, &refresh);
+        move |_| clear()
+    });
     ui.retry_button.connect_clicked({
         let refresh = Rc::clone(&refresh);
         move |_| refresh()
@@ -283,6 +287,52 @@ fn success(action: JobAction, name: &str) -> String {
         JobAction::Recover => "queue.action_requeued",
     };
     t_with(key, "{name}", name)
+}
+
+/// `jobs.clear_finished`: a confirmation that names how many jobs will go, then
+/// one call and one `queue.updated` from the daemon. The counter and the list are
+/// rebuilt from `jobs.list`, and the notice says how many rows left.
+fn clear_handle(
+    ui: &Ui,
+    client: &Rc<Client>,
+    state: &Rc<RefCell<QueueState>>,
+    refresh: &Refresh,
+) -> Rc<dyn Fn()> {
+    let (ui, client, state) = (ui.clone(), Rc::clone(client), Rc::clone(state));
+    let refresh = Rc::clone(refresh);
+    Rc::new(move || {
+        let count = state.borrow().finished_count();
+        if count == 0 {
+            return;
+        }
+        let (ui_for_run, client, state) = (ui.clone(), Rc::clone(&client), Rc::clone(&state));
+        let refresh = Rc::clone(&refresh);
+        let run: Rc<dyn Fn()> = Rc::new(move || {
+            let (ui, client, state) = (ui_for_run.clone(), Rc::clone(&client), Rc::clone(&state));
+            let refresh = Rc::clone(&refresh);
+            view::show_notice(&ui, None);
+            glib::spawn_future_local(async move {
+                match client.call("jobs.clear_finished", json!({})).await {
+                    Ok(value) => {
+                        let removed = value
+                            .get("removed")
+                            .and_then(Value::as_u64)
+                            .and_then(|removed| usize::try_from(removed).ok())
+                            .unwrap_or(0);
+                        state.borrow_mut().apply_clear(removed);
+                    }
+                    Err(error) => {
+                        if error.code == ErrorCode::DaemonUnavailable {
+                            state.borrow_mut().set_failure(&error);
+                        }
+                        view::show_failure(&ui, &error);
+                    }
+                }
+                refresh();
+            });
+        });
+        view::confirm_clear(&ui, count, run);
+    })
 }
 
 /// `queue.pause` while the queue is active and `queue.start` while it is paused,

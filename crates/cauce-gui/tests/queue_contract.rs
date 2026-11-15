@@ -378,3 +378,86 @@ fn all_states() -> [JobState; 10] {
         JobState::Interrupted,
     ]
 }
+
+// The bulk clear of `docs/ui-mvp.md` §5 and `docs/contracts.md` §6: the summary
+// above the list counts the four groups and the clear action exists only when
+// there is something finished to remove.
+
+#[test]
+fn summary_shows_the_four_groups() {
+    let jobs = all_states()
+        .iter()
+        .enumerate()
+        .map(|(index, job_state)| job(&format!("j{index}"), *job_state))
+        .collect();
+    let summary = state_with(jobs).summary();
+
+    assert_eq!(summary.total(), 10);
+    assert_eq!(summary.active(), 5);
+    assert_eq!(summary.queued(), 1);
+    assert_eq!(
+        summary.finished(),
+        4,
+        "terminados: completed, cancelled, failed e interrupted"
+    );
+    let headline = summary.headline();
+    for expected in ["10 en total", "5 activos", "1 en espera", "4 terminados"] {
+        assert!(
+            headline.contains(expected),
+            "falta «{expected}»: {headline}"
+        );
+    }
+}
+
+#[test]
+fn clear_button_is_disabled_without_finished_jobs() {
+    let running = state_with(vec![job("a", JobState::Running)]);
+    assert_eq!(running.finished_count(), 0);
+    assert!(
+        !running.can_clear(),
+        "sin terminados «Limpiar lista» está deshabilitado"
+    );
+
+    let waiting = state_with(vec![job("a", JobState::Queued), job("b", JobState::Paused)]);
+    assert!(
+        !waiting.can_clear(),
+        "en espera y en pausa tampoco son terminados"
+    );
+
+    let finished = state_with(vec![
+        job("a", JobState::Running),
+        job("b", JobState::Completed),
+    ]);
+    assert_eq!(finished.finished_count(), 1);
+    assert!(finished.can_clear(), "con un terminado se habilita");
+
+    let all_finished = state_with(vec![
+        job("a", JobState::Failed),
+        job("b", JobState::Interrupted),
+        job("c", JobState::Cancelled),
+    ]);
+    assert_eq!(all_finished.finished_count(), 3);
+    assert!(all_finished.can_clear());
+}
+
+#[test]
+fn clearing_reports_the_count() {
+    let mut state = state_with(vec![job("a", JobState::Completed)]);
+
+    state.apply_clear(3);
+    assert_eq!(
+        state.notice(),
+        Some("Se quitaron 3 trabajos terminados."),
+        "el aviso lleva la cuenta"
+    );
+
+    state.apply_clear(1);
+    assert_eq!(
+        state.notice(),
+        Some("Se quitó 1 trabajo terminado."),
+        "y usa el singular con uno"
+    );
+
+    state.apply_clear(0);
+    assert_eq!(state.notice(), None, "sin borrados no se anuncia nada");
+}

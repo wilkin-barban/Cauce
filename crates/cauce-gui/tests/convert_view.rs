@@ -533,3 +533,92 @@ fn the_page_shows_a_collapsed_disclosure_and_paints_no_stray_glyph() {
         skip("the_drop_area_is_full_width_and_visible");
     }
 }
+
+/// A 1080p H.264/AAC snapshot with `size` bytes, as the daemon sends it.
+fn sized_snapshot(path: &str, size: u64) -> cauce_core::MediaSnapshot {
+    serde_json::from_value(serde_json::json!({
+        "path": path, "container": "mp4", "duration_ms": 12500, "size_bytes": size,
+        "bitrate_bps": 900000,
+        "video_streams": [{ "index": 0, "codec": "h264", "profile": "High", "level": null,
+            "width": 1920, "height": 1080, "fps": 30.0, "pixel_format": "yuv420p",
+            "bit_depth": 8, "is_hdr": false, "bitrate_bps": null, "language": null }],
+        "audio_streams": [{ "index": 1, "codec": "aac", "channels": 2, "sample_rate": 48000,
+            "bitrate_bps": null, "language": "spa", "is_default": true }],
+        "subtitle_streams": [], "probed_at": "2026-11-14T10:00:00Z",
+    }))
+    .expect("el snapshot de prueba es válido")
+}
+
+#[test]
+fn the_selection_header_summary_and_row_removal_are_visible() {
+    use cauce_gui::pages::convert::state::ConvertState;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let ran = on_gtk_thread(|| {
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let removed = Rc::new(RefCell::new(Vec::<String>::new()));
+        let handler: Rc<dyn Fn(String)> = {
+            let removed = Rc::clone(&removed);
+            Rc::new(move |path: String| removed.borrow_mut().push(path))
+        };
+        let refresh = view::refresh(&ui, &state, &presets, &handler);
+        refresh();
+        assert!(
+            !ui.selection_box.is_visible(),
+            "sin archivos no hay cabecera de selección"
+        );
+
+        {
+            let mut state = state.borrow_mut();
+            state.set_output_dir(Some("/home/wilkin/Vídeos".to_owned()));
+            state.set_preset(Some("mp4-h264".to_owned()));
+            state.add_inputs(vec!["/tmp/uno.mp4".to_owned()]);
+            state.accept_probe(sized_snapshot("/tmp/uno.mp4", 1_048_576));
+        }
+        refresh();
+
+        assert!(
+            ui.selection_box.is_visible(),
+            "con archivos la cabecera aparece"
+        );
+        assert_eq!(ui.selection_heading.text(), "Seleccionado (1)");
+        assert_eq!(
+            ui.selection_size.text(),
+            "1.0 MiB",
+            "la cabecera suma tamaños"
+        );
+        let summary = ui.summary_label.text().to_string();
+        assert!(
+            summary.starts_with("Se añadirá 1 archivo a la cola"),
+            "la línea anterior a la CTA anuncia el alta: {summary}"
+        );
+        assert!(
+            summary.contains("carpeta: /home/wilkin/Vídeos"),
+            "{summary}"
+        );
+
+        // One removal button per accepted row, with its own name in the tooltip.
+        let mut remove_buttons = Vec::new();
+        walk(&ui.files_list.clone().upcast(), &mut |widget| {
+            if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+                if button.label().as_deref() == Some(t("convert.remove_file")) {
+                    remove_buttons.push(button.clone());
+                }
+            }
+        });
+        assert_eq!(remove_buttons.len(), 1, "una fila, un botón de quitar");
+        assert_eq!(
+            remove_buttons[0].tooltip_text().as_deref(),
+            Some("Quitar «uno.mp4»"),
+            "el botón nombra el archivo que quita"
+        );
+        remove_buttons[0].emit_clicked();
+        assert_eq!(removed.borrow().as_slice(), ["/tmp/uno.mp4".to_owned()]);
+    });
+    if !ran {
+        skip("the_selection_header_summary_and_row_removal_are_visible");
+    }
+}

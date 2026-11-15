@@ -24,7 +24,7 @@ use libadwaita as adw;
 
 use super::state::{JobAction, QueueState, progress_label, state_label};
 use crate::client::Client;
-use crate::i18n::t;
+use crate::i18n::{t, t_with};
 use crate::pages::convert::base_name;
 use crate::pages::{self, ErrorSurface, error_surface};
 
@@ -42,6 +42,9 @@ pub struct Ui {
     pub toolbar: adw::ToolbarView,
     pub header: adw::HeaderBar,
     pub queue_toggle: gtk::Button,
+    pub clear_button: gtk::Button,
+    pub summary: gtk::Label,
+    pub cleared: gtk::Label,
     pub jobs_list: gtk::ListBox,
     pub stack: gtk::Stack,
     pub hint: gtk::Label,
@@ -63,6 +66,14 @@ impl Ui {
         let queue_toggle = gtk::Button::with_label(t("queue.pause"));
         queue_toggle.add_css_class("pill");
         queue_toggle.set_tooltip_text(Some(t("queue.toggle_tooltip")));
+        // «Limpiar lista» removes only the finished jobs, asks first, and is
+        // disabled while there is nothing finished (`docs/ui-mvp.md` §5).
+        let clear_button = gtk::Button::with_label(t("queue.clear_finished"));
+        clear_button.set_widget_name("queue-clear-finished");
+        clear_button.add_css_class("pill");
+        clear_button.set_tooltip_text(Some(t("queue.clear_tooltip")));
+        clear_button.set_sensitive(false);
+        header.pack_end(&clear_button);
         header.pack_end(&queue_toggle);
 
         let jobs_list = gtk::ListBox::new();
@@ -126,6 +137,14 @@ impl Ui {
         hint.set_label("");
         hint.set_visible(false);
         let notice = error_surface("queue-notice");
+        // The four counters above the list: total, active, waiting and finished.
+        let summary = text_line("caption");
+        summary.set_widget_name("queue-summary");
+        summary.add_css_class("dim-label");
+        // What the last bulk clear did, so the rows never vanish in silence.
+        let cleared = text_line("success");
+        cleared.set_widget_name("queue-cleared");
+        cleared.set_visible(false);
         let footer = text_line("caption");
         footer.add_css_class("dim-label");
 
@@ -136,6 +155,8 @@ impl Ui {
         body.set_margin_end(12);
         body.append(&notice.area);
         body.append(&hint);
+        body.append(&summary);
+        body.append(&cleared);
         body.append(&stack);
         body.append(&footer);
 
@@ -157,6 +178,9 @@ impl Ui {
             toolbar,
             header,
             queue_toggle,
+            clear_button,
+            summary,
+            cleared,
             jobs_list,
             stack,
             hint,
@@ -318,6 +342,33 @@ pub fn show_phase(ui: &Ui, state: &QueueState) {
         ui.hint.set_label(hint);
     }
     ui.footer.set_label(&state.summary().footer());
+    let summary = state.summary();
+    ui.summary.set_label(&summary.headline());
+    ui.clear_button.set_sensitive(state.can_clear());
+    let notice = state.notice();
+    ui.cleared.set_visible(notice.is_some());
+    ui.cleared.set_label(notice.unwrap_or_default());
+}
+
+/// `AdwAlertDialog` with the number of finished jobs a bulk clear would remove,
+/// so the count is never a surprise (`docs/ui-mvp.md` §9).
+pub(super) fn confirm_clear(ui: &Ui, count: usize, run: Rc<dyn Fn()>) {
+    let body = match count {
+        1 => t("queue.confirm_clear_body_one").to_owned(),
+        n => t_with("queue.confirm_clear_body_many", "{n}", &n.to_string()),
+    };
+    let dialog = adw::AlertDialog::new(Some(t("queue.confirm_clear_title")), Some(&body));
+    dialog.add_response("back", t("queue.confirm_back"));
+    dialog.add_response("confirm", t("queue.confirm_clear_accept"));
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("back"));
+    dialog.set_close_response("back");
+    dialog.connect_response(None, move |_, response| {
+        if response == "confirm" {
+            run();
+        }
+    });
+    dialog.present(Some(&ui.toolbar));
 }
 
 /// `AdwAlertDialog` with the job base name, as `docs/ui-mvp.md` §9 asks.

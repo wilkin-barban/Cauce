@@ -8,7 +8,7 @@ use cauce_core::{
     Capabilities, ConversionPlan, JobError, MediaSnapshot, StreamAction, SubtitleAction,
 };
 
-use crate::i18n::{human_error, t, technical_details};
+use crate::i18n::{human_error, t, t_with, technical_details};
 
 /// The action that unblocks a machine without FFmpeg (`docs/ui-mvp.md` §9).
 pub const FFMPEG_COMMAND: &str = "sudo apt install ffmpeg";
@@ -50,6 +50,60 @@ pub struct ConvertState {
     error_details: Option<String>,
     blocking: Option<String>,
     queued: bool,
+    confirmation: Option<usize>,
+}
+
+/// The exact data of the line above the CTA (`docs/ui-mvp.md` §4): how many files
+/// will be queued, the preset and the folder, or which of the two is missing.
+///
+/// It carries data, never a rendered widget: the view adds the localized preset
+/// name with [`SummaryLine::with_preset`] and prints [`SummaryLine::sentence`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryLine {
+    count: usize,
+    preset: Option<String>,
+    output_dir: Option<String>,
+}
+
+impl SummaryLine {
+    /// How many accepted files will be queued.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// The preset id the page chose, if any.
+    pub fn preset(&self) -> Option<&str> {
+        self.preset.as_deref()
+    }
+
+    /// The output folder the page chose, if any.
+    pub fn output_dir(&self) -> Option<&str> {
+        self.output_dir.as_deref()
+    }
+
+    /// Replaces the preset id with the ratified name of the current locale.
+    pub fn with_preset(mut self, name: Option<&str>) -> Self {
+        self.preset = name.map(str::to_owned);
+        self
+    }
+
+    /// The sentence the page shows: the count in singular or plural, the preset
+    /// and the folder, or the exact piece that is missing.
+    pub fn sentence(&self) -> String {
+        let count = match self.count {
+            1 => t("convert.summary_one").to_owned(),
+            n => t_with("convert.summary_many", "{n}", &n.to_string()),
+        };
+        let preset = match self.preset.as_deref() {
+            Some(name) => t_with("convert.summary_preset", "{name}", name),
+            None => t("convert.summary_missing_preset").to_owned(),
+        };
+        let folder = match self.output_dir.as_deref() {
+            Some(path) => t_with("convert.summary_folder", "{path}", path),
+            None => t("convert.summary_missing_folder").to_owned(),
+        };
+        format!("{count} · {preset} · {folder}")
+    }
 }
 
 impl ConvertState {
@@ -86,6 +140,51 @@ impl ConvertState {
     pub fn accepted(&self) -> &[MediaSnapshot] {
         &self.accepted
     }
+
+    /// How many accepted files the header counts.
+    pub fn accepted_count(&self) -> usize {
+        self.accepted.len()
+    }
+
+    /// The bytes of the accepted files: what the header announces as the total.
+    pub fn accepted_total_bytes(&self) -> u64 {
+        self.accepted
+            .iter()
+            .map(|snapshot| snapshot.size_bytes)
+            .sum()
+    }
+
+    /// The visible header of the selection: «Seleccionados (2)».
+    pub fn selection_heading(&self) -> String {
+        match self.accepted.len() {
+            1 => t("convert.selection_heading_one").to_owned(),
+            n => t_with("convert.selection_heading_many", "{n}", &n.to_string()),
+        }
+    }
+
+    /// The exact data of the line the page shows above the CTA.
+    pub fn summary_line(&self) -> SummaryLine {
+        SummaryLine {
+            count: self.accepted.len(),
+            preset: self.preset_id.clone(),
+            output_dir: self.output_dir.clone(),
+        }
+    }
+
+    /// How many jobs the last successful `jobs.add` queued, if it did.
+    pub fn confirmation(&self) -> Option<usize> {
+        self.confirmation
+    }
+
+    /// The confirmation of `docs/ui-mvp.md` §4: what happened to the selection,
+    /// with the count in singular or plural.
+    pub fn confirmation_sentence(&self) -> String {
+        match self.confirmation {
+            Some(1) => t("convert.added_one").to_owned(),
+            Some(n) => t_with("convert.added_many", "{n}", &n.to_string()),
+            None => String::new(),
+        }
+    }
     pub fn rejected(&self) -> &[RejectedInput] {
         &self.rejected
     }
@@ -111,6 +210,7 @@ impl ConvertState {
     pub fn add_inputs(&mut self, paths: Vec<String>) {
         self.queued = false;
         self.error = None;
+        self.confirmation = None;
         for path in paths {
             let known = self.accepted.iter().any(|known| known.path == path)
                 || self.rejected.iter().any(|known| known.path == path)
@@ -213,13 +313,34 @@ impl ConvertState {
     }
 
     /// Empties the selection after a successful `jobs.add`, keeping folder/preset.
-    pub fn clear(&mut self) {
+    pub fn clear_all(&mut self) {
         self.accepted.clear();
         self.rejected.clear();
         self.pending.clear();
         self.error = None;
         self.error_details = None;
         self.queued = false;
+        self.confirmation = None;
+    }
+
+    /// Removes one accepted file, the row's own button. Reports the snapshot that
+    /// left so the caller never has to search for it again.
+    pub fn removal(&mut self, path: &str) -> Option<MediaSnapshot> {
+        let index = self
+            .accepted
+            .iter()
+            .position(|snapshot| snapshot.path == path)?;
+        self.queued = false;
+        self.confirmation = None;
+        Some(self.accepted.remove(index))
+    }
+
+    /// Empties the selection after a successful `jobs.add` and records how many
+    /// jobs were queued, so the page explains where they went instead of silently
+    /// dropping the list.
+    pub fn confirm_queue(&mut self, count: usize) {
+        self.clear_all();
+        self.confirmation = Some(count);
     }
 
     fn retire(&mut self, path: &str) {

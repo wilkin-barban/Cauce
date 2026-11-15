@@ -243,3 +243,50 @@ pub fn presets_changed() {
 pub fn on_presets_change(listener: PresetsListener) {
     PRESETS_LISTENER.with(|slot| *slot.borrow_mut() = Some(listener));
 }
+
+/// Moves the shell to `id` from a widget inside a page, without reaching back to
+/// the window object: the sidebar row is selected, which is the same signal a
+/// person's click sends, so the highlight and the content can never disagree.
+///
+/// Outside a shell — a page built on its own by a test — there is nothing to
+/// select and the call is a no-op.
+pub fn open_section(from: &impl IsA<gtk::Widget>, id: &str) {
+    let Some(index) = SECTIONS.iter().position(|section| section.id == id) else {
+        return;
+    };
+    let widget = from.clone().upcast::<gtk::Widget>();
+    let Some(split) = widget
+        .ancestor(adw::NavigationSplitView::static_type())
+        .and_then(|ancestor| ancestor.downcast::<adw::NavigationSplitView>().ok())
+    else {
+        return;
+    };
+    let Some(sidebar) = split.sidebar() else {
+        return;
+    };
+    let sidebar: gtk::Widget = sidebar.upcast();
+    let Some(list) = find_sidebar_list(&sidebar) else {
+        return;
+    };
+    if let Some(row) = list.row_at_index(i32::try_from(index).unwrap_or(0)) {
+        list.select_row(Some(&row));
+    }
+}
+
+/// The `GtkListBox` of the sidebar: the first list that carries one row per
+/// section, so a list inside a page can never be mistaken for it.
+fn find_sidebar_list(widget: &gtk::Widget) -> Option<gtk::ListBox> {
+    if let Some(list) = widget.downcast_ref::<gtk::ListBox>()
+        && list.observe_children().n_items() == SECTIONS.len() as u32
+    {
+        return Some(list.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        if let Some(found) = find_sidebar_list(&current) {
+            return Some(found);
+        }
+        child = current.next_sibling();
+    }
+    None
+}

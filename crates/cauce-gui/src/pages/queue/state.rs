@@ -10,7 +10,7 @@
 
 use cauce_core::{Job, JobError, JobState, Progress};
 
-use crate::i18n::{human_error, t, technical_details};
+use crate::i18n::{human_error, t, t_with, technical_details};
 
 /// The ten states of `docs/contracts.md` §4, in transition order.
 pub const STATES: [JobState; 10] = [
@@ -147,6 +147,36 @@ impl QueueSummary {
             + self.interrupted
     }
 
+    /// The finished jobs, exactly the four states a bulk clear deletes: the two
+    /// terminal ones of `docs/contracts.md` §4 plus `failed` and `interrupted`.
+    pub fn finished(&self) -> usize {
+        self.completed + self.cancelled + self.failed + self.interrupted
+    }
+
+    /// The visible summary above the list: total, active, waiting and finished,
+    /// always the four groups so a zero is never hidden.
+    pub fn headline(&self) -> String {
+        [
+            t("queue.summary_total").replace("{n}", &self.total().to_string()),
+            named(
+                self.active(),
+                t("queue.summary_active_one"),
+                t("queue.summary_active_many"),
+            ),
+            named(
+                self.queued,
+                t("queue.summary_queued_one"),
+                t("queue.summary_queued_many"),
+            ),
+            named(
+                self.finished(),
+                t("queue.summary_finished_one"),
+                t("queue.summary_finished_many"),
+            ),
+        ]
+        .join(" · ")
+    }
+
     /// One line for the page footer, skipping the groups that are empty.
     pub fn footer(&self) -> String {
         let mut parts = vec![t("queue.footer_total").replace("{n}", &self.total().to_string())];
@@ -179,6 +209,7 @@ pub struct QueueState {
     queue_paused: bool,
     last_error: Option<String>,
     last_details: Option<String>,
+    notice: Option<String>,
     loaded: bool,
 }
 
@@ -215,6 +246,30 @@ impl QueueState {
     /// The code and the daemon's message, for the collapsed disclosure only.
     pub fn last_details(&self) -> Option<&str> {
         self.last_details.as_deref()
+    }
+
+    /// What the page says after a bulk clear (`docs/ui-mvp.md` §5).
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    /// How many jobs a bulk clear would remove right now.
+    pub fn finished_count(&self) -> usize {
+        self.summary().finished()
+    }
+
+    /// «Limpiar lista» is enabled only when there is something finished to remove.
+    pub fn can_clear(&self) -> bool {
+        self.finished_count() > 0
+    }
+
+    /// Records the count `jobs.clear_finished` answered, in singular or plural.
+    pub fn apply_clear(&mut self, removed: usize) {
+        self.notice = match removed {
+            0 => None,
+            1 => Some(t("queue.cleared_one").to_owned()),
+            n => Some(t_with("queue.cleared_many", "{n}", &n.to_string())),
+        };
     }
 
     /// Newest first, as `docs/ui-mvp.md` §5 asks; the daemon's own listing order
@@ -277,6 +332,7 @@ impl QueueState {
     pub fn set_error(&mut self, message: String) {
         self.last_error = Some(message);
         self.last_details = None;
+        self.notice = None;
     }
 
     /// Surfaces a daemon failure: the page shows the human sentence and keeps the
@@ -284,6 +340,7 @@ impl QueueState {
     pub fn set_failure(&mut self, error: &JobError) {
         self.last_error = Some(human_error(error.code, &error.message));
         self.last_details = Some(technical_details(error.code, &error.message));
+        self.notice = None;
     }
 
     /// Only the actions the state machine allows, in display order.

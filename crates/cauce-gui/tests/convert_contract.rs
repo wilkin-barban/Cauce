@@ -252,3 +252,214 @@ fn adding_a_folder_expands_its_regular_files() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+// The explicit selection of `docs/ui-mvp.md` §4: a header that counts and sizes
+// what will be queued, one removal per row, a clear-all, and a summary line that
+// names the piece the CTA is missing.
+
+#[test]
+fn header_counts_and_sizes_the_selection() {
+    let mut state = ConvertState::new();
+    state.add_inputs(vec!["/tmp/uno.mp4".to_owned(), "/tmp/dos.mkv".to_owned()]);
+    let mut first = snapshot("/tmp/uno.mp4");
+    first.size_bytes = 1_500_000;
+    let mut second = snapshot("/tmp/dos.mkv");
+    second.size_bytes = 2_500_000;
+    state.accept_probe(first);
+    state.accept_probe(second);
+
+    assert_eq!(
+        state.accepted_count(),
+        2,
+        "la cabecera cuenta los aceptados"
+    );
+    assert_eq!(
+        state.accepted_total_bytes(),
+        4_000_000,
+        "y suma el tamaño de todos"
+    );
+    assert_eq!(
+        state.selection_heading(),
+        "Seleccionados (2)",
+        "la cabecera se lee tal cual"
+    );
+
+    let mut single = ConvertState::new();
+    single.add_inputs(vec!["/tmp/uno.mp4".to_owned()]);
+    single.accept_probe(snapshot("/tmp/uno.mp4"));
+    assert_eq!(single.accepted_count(), 1);
+    assert_eq!(single.accepted_total_bytes(), 1024);
+    assert_eq!(
+        single.selection_heading(),
+        "Seleccionado (1)",
+        "un solo archivo se anuncia en singular"
+    );
+}
+
+#[test]
+fn removing_one_updates_count_and_size() {
+    let mut state = ConvertState::new();
+    state.add_inputs(vec!["/tmp/uno.mp4".to_owned(), "/tmp/dos.mkv".to_owned()]);
+    let mut first = snapshot("/tmp/uno.mp4");
+    first.size_bytes = 1_500_000;
+    let mut second = snapshot("/tmp/dos.mkv");
+    second.size_bytes = 2_500_000;
+    state.accept_probe(first);
+    state.accept_probe(second);
+
+    let removed = state.removal("/tmp/uno.mp4").expect("la fila existe");
+
+    assert_eq!(removed.path, "/tmp/uno.mp4");
+    assert_eq!(state.accepted_count(), 1, "queda uno");
+    assert_eq!(state.accepted_total_bytes(), 2_500_000, "y su tamaño");
+    assert_eq!(state.accepted()[0].path, "/tmp/dos.mkv");
+    assert!(
+        state.removal("/tmp/uno.mp4").is_none(),
+        "quitar dos veces no inventa una fila"
+    );
+    assert_eq!(state.accepted_count(), 1, "y no borra otra cosa");
+}
+
+#[test]
+fn clear_all_empties_the_selection() {
+    let mut state = ready_state();
+    state.reject("/tmp/roto.mkv".to_owned(), "ilegible".to_owned());
+    assert!(state.can_queue());
+
+    state.clear_all();
+
+    assert_eq!(state.accepted_count(), 0, "no queda ningún aceptado");
+    assert_eq!(state.accepted_total_bytes(), 0);
+    assert!(state.rejected().is_empty(), "ni ningún rechazado");
+    assert!(state.pending_paths().is_empty(), "ni pendientes");
+    assert!(!state.can_queue(), "sin archivos no hay nada que encolar");
+    assert_eq!(state.phase(), ConvertPhase::Empty);
+    assert_eq!(
+        state.output_dir(),
+        Some("/home/wilkin/Vídeos"),
+        "la carpeta elegida se conserva"
+    );
+    assert_eq!(state.preset_id(), Some("mp4-h264"), "y el preset también");
+}
+
+#[test]
+fn summary_names_the_missing_preset_or_folder() {
+    let state = ready_state();
+    let complete = state.summary_line().sentence();
+    assert!(
+        !complete.to_lowercase().contains("falta"),
+        "con las dos piezas no se anuncia ninguna falta: {complete}"
+    );
+
+    let mut without_preset = ready_state();
+    without_preset.set_preset(None);
+    let sentence = without_preset.summary_line().sentence();
+    assert!(
+        sentence.contains("falta el preset"),
+        "la frase nombra el preset que falta: {sentence}"
+    );
+    assert!(
+        !sentence.contains("falta la carpeta"),
+        "y no nombra lo que sí está: {sentence}"
+    );
+
+    let mut without_folder = ready_state();
+    without_folder.set_output_dir(None);
+    let sentence = without_folder.summary_line().sentence();
+    assert!(
+        sentence.contains("falta la carpeta de salida"),
+        "la frase nombra la carpeta que falta: {sentence}"
+    );
+    assert!(!sentence.contains("falta el preset"), "{sentence}");
+
+    let mut without_both = ready_state();
+    without_both.set_preset(None);
+    without_both.set_output_dir(None);
+    let sentence = without_both.summary_line().sentence();
+    assert!(
+        sentence.contains("falta el preset") && sentence.contains("falta la carpeta de salida"),
+        "sin las dos piezas se nombran las dos: {sentence}"
+    );
+}
+
+#[test]
+fn summary_uses_singular_and_plural() {
+    let mut state = ready_state();
+    let one = state.summary_line().sentence();
+    assert!(
+        one.starts_with("Se añadirá 1 archivo a la cola"),
+        "un archivo se anuncia en singular: {one}"
+    );
+
+    state.add_inputs(vec!["/tmp/segundo.mkv".to_owned()]);
+    state.accept_probe(snapshot("/tmp/segundo.mkv"));
+    let many = state.summary_line().sentence();
+    assert!(
+        many.starts_with("Se añadirán 2 archivos a la cola"),
+        "dos archivos se anuncian en plural: {many}"
+    );
+    assert!(
+        many.contains("preset: mp4-h264"),
+        "la frase nombra el preset elegido: {many}"
+    );
+    assert!(
+        many.contains("carpeta: /home/wilkin/Vídeos"),
+        "y la carpeta de salida: {many}"
+    );
+
+    // The confirmation after queueing counts in the same two forms.
+    state.confirm_queue(1);
+    assert_eq!(state.confirmation(), Some(1));
+    assert!(
+        state
+            .confirmation_sentence()
+            .starts_with("Se añadió 1 trabajo")
+    );
+    state.confirm_queue(3);
+    assert_eq!(
+        state.confirmation(),
+        Some(3),
+        "la confirmación lleva la cuenta"
+    );
+    assert!(
+        state
+            .confirmation_sentence()
+            .starts_with("Se añadieron 3 trabajos")
+    );
+}
+
+#[test]
+fn cta_disabled_without_preset_or_folder() {
+    assert!(
+        ready_state().can_queue(),
+        "con todo listo la CTA se habilita"
+    );
+
+    let mut without_preset = ready_state();
+    without_preset.set_preset(None);
+    assert!(
+        !without_preset.can_queue(),
+        "sin preset la CTA queda deshabilitada"
+    );
+    assert!(
+        without_preset
+            .summary_line()
+            .sentence()
+            .contains("falta el preset"),
+        "y la frase dice cuál falta"
+    );
+
+    let mut without_folder = ready_state();
+    without_folder.set_output_dir(None);
+    assert!(
+        !without_folder.can_queue(),
+        "sin carpeta la CTA queda deshabilitada"
+    );
+    assert!(
+        without_folder
+            .summary_line()
+            .sentence()
+            .contains("falta la carpeta de salida"),
+        "y la frase dice cuál falta"
+    );
+}
