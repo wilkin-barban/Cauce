@@ -598,3 +598,14 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Limitación anotada: GitHub no publica aún la etiqueta `ubuntu-26.04`, así que el job usa `ubuntu-latest` (24.04) con comentario explícito; el objetivo sigue siendo Ubuntu 26.04 según `architecture.md` §16. El workflow no se ejecutó en GitHub desde aquí; cada bloque `run:` pasó `bash -n`.
 
 **L37 (decisión del usuario) — review nativa de T20 omitida:** el usuario aprobó cerrar T20 sin abrir el ciclo de review (`reviewDue: true` por `process_boundary` del test que lanza validadores), porque la instalación real verificada —`dpkg`, binarios, AppStream, unidades y socket `0600`— cubre el riesgo de la unidad y el contexto de la sesión estaba al límite. Queda registrado como decisión consciente, no como omisión.
+
+**L38 (T23 · C-060 y T24 · C-061) — conversiones reales y smoke GUI+daemon en `ssh ubuntu`:**
+- **T23 con el daemon real y `ffprobe`, sin stubs** — 5 casos, todos OK:
+  - `system-smarttv-compat`: VP9+Opus → **MP4 H.264/AAC**, 320×240, 2007 ms (transcode).
+  - `system-smarttv-hevc`: H.264 → **MKV HEVC/AAC**, 320×240, 2021 ms (transcode).
+  - `system-archival-master`: **caso `copy`** — audio Opus copiado, vídeo VP9 recodificado a HEVC en MKV, 2028 ms.
+  - `system-audio-mp3`: **sin pista de vídeo**, MP3 mono, 2005 ms.
+  - `system-audio-flac`: **sin pista de vídeo**, FLAC mono, 2000 ms.
+  - Verificación independiente con `ffprobe`: códec de vídeo y audio, resolución dentro del límite del preset, canales como techo (v0.1 nunca hace upmix) y duración dentro de `max(2 s, 3 %)`.
+- **T24 smoke GUI+daemon**: `window-ready` con `CAUCE_SMOKE=1` bajo Xvfb, el daemon **sobrevive al cierre de la GUI**, una conversión real completada mientras corre y parada limpia con `SIGTERM` (exit 0, socket eliminado). Evidencia: `gui_smoke: OK window-ready, daemon survived the GUI, system-smarttv-compat converted, clean stop`.
+- Primer intento falló con `PATH_DENIED` porque la carpeta de salida estaba en `/tmp`, fuera de la raíz autorizada (`$HOME`). **Es el comportamiento correcto**, no un bug: el script ahora escribe bajo `$HOME` y lo documenta.
