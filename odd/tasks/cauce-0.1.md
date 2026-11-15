@@ -407,3 +407,12 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Sin GPU ni red en tests: las únicas apariciones de `nvenc`/`vaapi`/`qsv` son aserciones *negativas* (el catálogo no puede declarar encoders GPU y el builder debe rechazarlos). Cero dependencias de red.
 - Fronteras verificadas por `cargo metadata`: `cauce-core` solo depende de `serde`/`serde_json`; `cauce-i18n`, `cauce-jobs`, `cauce-daemon`, `cauce-gui` y `cauce-cli` siguen sin dependencias cruzadas.
 - Fase 1 completa: T1-T8 cerradas. La GUI no se tocó.
+
+**L15 (T9 · C-020) — RED observado, inventario real y dos correcciones de spec:**
+- RED real: `E0432` por `REQUIRED_ENCODERS` y `Capabilities` inexistentes, y `E0433: cannot find module or crate cauce_core` en `cauce-ffmpeg`.
+- GREEN: 9 tests de toolchain + 2 de contrato de capacidades; suite total **97/97**; fmt y clippy limpios.
+- **Faltaba una arista de dependencia**: `cauce-ffmpeg` no declaraba `cauce-core`, que `architecture.md` §5 exige. Autorizada y agregada como única línea de `[dependencies]`; el guard `workspace_boundaries` ya la permitía.
+- **Inventario real medido** (FFmpeg 8.0.1-3ubuntu2 local): 226 encoders y 558 filtros tras descartar las líneas de leyenda (`=`). Mi primer conteo de 228/559 las incluía por error; verifiqué que el parser del código las descarta. Los 10 encoders del MVP y los 5 filtros requeridos están presentes. En `ssh ubuntu` (8.0.1-3ubuntu2+esm5) el inventario coincide.
+- **Contradicción de docs detectada**: `architecture.md` §11 enumera 8 encoders CPU y omite `alac` y `pcm_s16le`, que `presets.md` exige para `system-audio-alac` y `system-audio-wav`. Se siguió `presets.md` (`REQUIRED_ENCODERS` = 10). Recomendación: actualizar §11; no lo edité por mi cuenta.
+- **Línea RED del ODD corregida**: T9 no emite `FFMPEG_FEATURE_MISSING`; `inspect` devuelve `Ok(Capabilities)` con `ffmpeg_missing`/`warnings` porque `architecture.md` §10 pide diagnóstico primero. El rechazo con `FFMPEG_FEATURE_MISSING` corresponde al arranque de un trabajo (T12/T13).
+- Decisión de implementación: `disk_free_bytes` vía `df -B1 --output=avail` con argv (sin shell); timeouts de 10 s por proceso con `spawn` + espera acotada, sin dependencias nuevas.
