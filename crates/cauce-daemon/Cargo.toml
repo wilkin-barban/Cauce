@@ -25,3 +25,53 @@ tokio = { version = "1", features = [
     "sync",
     "time",
 ] }
+
+# One `.deb` for three binaries (`docs/architecture.md` §16, T20/C-050).
+#
+# `cargo-deb` builds exactly one package per `[package.metadata.deb]` table, so
+# the whole Cauce package is described here, in the daemon crate, which is the
+# crate the package is named after. `cauce-gui` and `cauce-cli` are declared as
+# plain assets whose source starts with the magic `target/release/` prefix,
+# which cargo-deb resolves to the build profile directory of this workspace; the
+# binaries are therefore built by both crates beforehand:
+#
+#   cargo build --release --workspace
+#   cargo deb -p cauce-daemon --no-build
+#
+# `--no-build` only assembles the already-built binaries plus the files in
+# `packaging/`, so the package is one `.deb` and never a per-crate package.
+# Non-binary asset sources are relative to this manifest (`../../` = repo root).
+[package.metadata.deb]
+name = "cauce"
+maintainer = "Wilkin Barban <barbanwilkin@gmail.com>"
+copyright = "2026 Wilkin Barban"
+license-file = ["../../LICENSE", "0"]
+section = "sound"
+priority = "optional"
+# Exactly the runtime dependencies of §16, without `$auto`: the GUI's shared
+# libraries are covered by `libgtk-4-1` and `libadwaita-1-0`, and FFmpeg plus
+# FFprobe come from the system `ffmpeg` package (S2: nothing is embedded).
+depends = "ffmpeg, libgtk-4-1, libadwaita-1-0, libnotify4, xdg-desktop-portal"
+extended-description = """\
+Native GTK4 and Libadwaita front end, a user daemon that owns the queue and the
+FFmpeg children, and a diagnostic CLI. The daemon is socket activated by
+cauce.socket, so closing the window never stops a conversion. FFmpeg and FFprobe
+are provided by the system and are not bundled."""
+assets = [
+    ["target/release/cauce-daemon", "usr/bin/", "755"],
+    ["target/release/cauce-gui", "usr/bin/", "755"],
+    ["target/release/cauce-cli", "usr/bin/", "755"],
+    ["../../packaging/cauce.socket", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/cauce.service", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/cauce.desktop", "usr/share/applications/", "644"],
+    [
+        "../../packaging/io.github.wilkin.Cauce.metainfo.xml",
+        "usr/share/metainfo/",
+        "644",
+    ],
+    [
+        "../../packaging/icons/hicolor/scalable/apps/io.github.wilkin.Cauce.svg",
+        "usr/share/icons/hicolor/scalable/apps/",
+        "644",
+    ],
+]

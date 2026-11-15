@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cauce AppStream metadata (docs/architecture.md §16). Own asset: the summary,
+  the description and the OARS rating describe this project only. The id must
+  stay equal to the desktop entry basename and to the installed icon name.
+-->
+<component type="desktop-application">
+  <id>io.github.wilkin.Cauce</id>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Cauce</name>
+  <summary>Convierte audio y vídeo con los presets del sistema</summary>
+
+  <description>
+    <p>
+      Cauce es un conversor multimedia para el escritorio de GNOME. Añade
+      archivos o carpetas a una cola persistente, elige uno de los presets del
+      sistema y deja que el daemon haga la conversión con el FFmpeg instalado en
+      Ubuntu.
+    </p>
+    <p>
+      La cola vive en un daemon propio: puedes pausar, reanudar, cancelar y
+      reintentar, y cerrar la ventana sin detener lo que ya está convirtiendo.
+      Cada trabajo muestra el progreso real que informa FFmpeg.
+    </p>
+    <p>
+      Cauce no trae binarios de FFmpeg: usa las bibliotecas y los códecs del
+      sistema. La interfaz y los mensajes están disponibles en español, inglés
+      y portugués de Brasil.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">cauce.desktop</launchable>
+
+  <provides>
+    <binary>cauce-gui</binary>
+    <binary>cauce-cli</binary>
+    <binary>cauce-daemon</binary>
+  </provides>
+
+  <categories>
+    <category>AudioVideo</category>
+  </categories>
+
+  <keywords>
+    <keyword>convertir</keyword>
+    <keyword>vídeo</keyword>
+    <keyword>audio</keyword>
+    <keyword>ffmpeg</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <developer id="io.github.wilkin">
+    <name>Wilkin Barban</name>
+  </developer>
+
+  <url type="homepage">https://github.com/wilkin-barban/Cauce</url>
+  <url type="vcs-browser">https://github.com/wilkin-barban/Cauce</url>
+
+  <releases>
+    <release version="0.1.0" date="2026-11-14">
+      <description>
+        <p>Primera versión: cola persistente, presets del sistema y GUI nativa.</p>
+      </description>
+    </release>
+  </releases>
+</component>

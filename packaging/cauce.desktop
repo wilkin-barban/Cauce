@@ -1,0 +1,15 @@
+[Desktop Entry]
+# Cauce desktop entry (docs/architecture.md §16). Own asset: the name, the
+# Spanish comment and the icon come from this project, not from another app.
+Type=Application
+Version=1.0
+Name=Cauce
+GenericName=Conversor multimedia
+Comment=Convierte audio y vídeo con los presets del sistema
+Exec=cauce-gui
+Icon=io.github.wilkin.Cauce
+Terminal=false
+Categories=AudioVideo;AudioVideoEditing;
+Keywords=cauce;conversor;convertir;audio;vídeo;ffmpeg;
+StartupNotify=true
+StartupWMClass=io.github.wilkin.Cauce
