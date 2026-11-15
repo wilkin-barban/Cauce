@@ -44,7 +44,7 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
     });
     ui.output_button
         .connect_clicked(output_handle(ui, state, &refresh, &run_plan));
-    ui.preset_dropdown.connect_selected_notify({
+    ui.preset_combo.connect_selected_notify({
         let (state, presets) = (Rc::clone(state), Rc::clone(&presets));
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         move |dropdown| {
@@ -343,7 +343,7 @@ fn bootstrap(
                 .map(|preset| localized_preset_name(preset).to_owned())
                 .collect();
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            ui.preset_dropdown
+            ui.preset_combo
                 .set_model(Some(&gtk::StringList::new(&names)));
             let first = list.first().map(|preset| preset.id.clone());
             *presets.borrow_mut() = list;

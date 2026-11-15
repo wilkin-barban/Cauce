@@ -44,7 +44,7 @@ pub struct Ui {
     pub error_label: gtk::Label,
     pub output_row: adw::ActionRow,
     pub output_button: gtk::Button,
-    pub preset_dropdown: gtk::DropDown,
+    pub preset_combo: adw::ComboRow,
     pub preset_description: gtk::Label,
     pub plan_box: gtk::Box,
     pub plan_summary_line: gtk::Label,
@@ -101,15 +101,17 @@ impl Ui {
         output_group.set_title(t("convert.output_group"));
         output_group.add(&output_row);
 
-        let preset_dropdown = gtk::DropDown::from_strings(&[t("convert.loading_presets")]);
-        let preset_row = adw::ActionRow::new();
-        preset_row.set_title(t("convert.output_format"));
-        preset_row.add_suffix(&preset_dropdown);
+        // `AdwComboRow` owns its own list and selected-state rendering, so the page
+        // never nests a `GtkDropDown` whose internal images escaped their container
+        // (recorded in `odd/tasks/cauce-0.1.md`, L33).
+        let preset_combo = adw::ComboRow::new();
+        preset_combo.set_title(t("convert.output_format"));
+        preset_combo.set_model(Some(&gtk::StringList::new(&[t("convert.loading_presets")])));
         let preset_description = text_line("dim-label");
         preset_description.set_visible(false);
         let preset_group = adw::PreferencesGroup::new();
         preset_group.set_title(t("convert.preset_group"));
-        preset_group.add(&preset_row);
+        preset_group.add(&preset_combo);
 
         let plan_summary_line = text_line("body");
         let plan_reasons = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -190,7 +192,7 @@ impl Ui {
             error_label,
             output_row,
             output_button,
-            preset_dropdown,
+            preset_combo,
             preset_description,
             plan_box,
             plan_summary_line,
