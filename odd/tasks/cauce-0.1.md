@@ -528,3 +528,22 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Dos huecos de contrato detectados y NO resueltos por mi cuenta**:
   1. `docs/ui-mvp.md` §5 habla de "Iniciar cola", pero `contracts.md` §6 no tiene `queue.start`: los trabajos arrancan cuando la cola está activa, así que el toggle de pausa/reanudar es el único control. Se documenta como interpretación, sin inventar un método.
   2. `docs/contracts.md` §4 dice que un `interrupted` debe reencolarse por acción de la UI, pero §6 no expone ningún método de recuperación y `Retry` solo es válido desde `failed`. La fila de un `interrupted` queda sin acción. **Requiere decisión del usuario**: agregar `jobs.recover` (→ `JobAction::Recover`) al contrato, o extender `jobs.retry` a `interrupted`. No se implementó nada.
+
+**L29 (T18 · C-043) — Presets, Diagnóstico y Ajustes:**
+- RED: `unresolved import cauce_gui::pages::{diagnostics,presets,settings}`. GREEN: 8 tests de contrato de páginas; suite **238/238**.
+- Presets: los 13 agrupados por `category` (tv, social, archive, audio; desconocidas al final por orden alfabético) y panel de detalle que omite filas vacías. Catálogo de solo lectura.
+- Diagnóstico: versiones de FFmpeg/FFprobe, cantidad de encoders y filtros, núcleos, disco en unidad humana, versión del daemon, lista de faltantes con `sudo apt install ffmpeg` al portapapeles y "Copiar informe" en texto plano.
+- Ajustes: carpeta de salida, concurrencia 1-8, tema en vivo con `AdwStyleManager`, idioma, notificaciones, política de duplicados y `keep_temp_on_failure`; un valor rechazado revierte el widget y muestra el error en línea.
+- Bug real corregido: los nombres de preset llevan `&` y `AdwActionRow` los interpretaba como markup → se escapan (`pages::escaped`).
+- `settings.rs` se partió en `pages/settings/mod.rs` (núcleo) + `view.rs` (376) para no superar 400.
+- Corte: 419 · 284 · 153 · 376 · 286. El primero quedó **19 líneas sobre 400** (incluye las declaraciones de módulo en `pages.rs` junto con el catálogo de presets); se acepta y se registra.
+- No implementado por falta de contrato: versión de protocolo y memoria libre en Diagnóstico (no existen en `Capabilities`) y advertencia de hardware por preset (v0.1 resuelve todo a CPU).
+
+**L30 (T19 · C-044) — i18n ES/EN/PT-BR completo y conmutación en vivo:**
+- RED: `unresolved import cauce_gui::i18n`, `cauce_i18n`, `pages::queue::state::STATES`, campos `title_key`/`description_key` ausentes (7 errores).
+- GREEN: 7 tests de i18n; suite **245/245**. **222 claves por idioma** (204 iniciales + 18 al cerrar la deuda).
+- `cauce-i18n` con `Locale` (`es`/`en`/`pt-BR` exacto, nunca `pt-br`), `Catalog`, `translate` con fallback exacto→inglés→clave (nunca panic), `keys()` y `missing_in()` para probar paridad.
+- Catálogos separados por idioma (`catalog/{es,en,pt_br}.rs`) para no superar 400 líneas.
+- Conmutación en vivo: Ajustes persiste con `settings.set` y reconstruye la pila de páginas conservando la sección; título, sidebar, encabezados, banner y pie se repintan sin reiniciar.
+- **Deuda cerrada**: las 22 cadenas visibles que quedaban en `client.rs` y `queue/flows.rs` ahora salen del catálogo (18 claves nuevas en los tres idiomas). Barrido de literales: 0 cadenas visibles en esos dos archivos.
+- Corte: 1264 (crate de catálogos — excepción documentada: las tres tablas y el cargador no compilan por separado) · 178 · 258 · 202 · 161 · 179.
