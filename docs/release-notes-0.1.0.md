@@ -2,6 +2,10 @@
 
 **Estado:** candidato de release preparado localmente. **Todavía no está publicado; espera la aprobación del mantenedor.** No hay tag, no hay release en GitHub y no se subió ningún artefacto (`odd/tasks/cauce-0.1.md` S15, T25/C-062).
 
+## Control run before the tag
+
+One clean run with a unique output directory through IPC, same preset used by the earlier failed attempt: **completed**, and the published file was verified with `ffprobe` (H.264 320×240, AAC mono, 2.000 s, 53 151 B). The earlier failure was environmental (reused output folder), not a product defect.
+
 ## Qué es Cauce
 
 Cauce es un conversor multimedia nativo para Ubuntu 26.04 (amd64), escrito en Rust con GTK4/Libadwaita y su propio daemon de usuario. Usa el **FFmpeg del sistema** (`ffmpeg`/`ffprobe`) como dependencia: no embebe binarios ni transcodificadores propios.

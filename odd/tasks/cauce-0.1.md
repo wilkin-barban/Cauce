@@ -699,3 +699,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - La `05-diagnostico.png` anterior era una captura vieja con barras negras y UI previa a las correcciones; **se reemplazó**.
 - Nueva captura por **ventana cliente** (`import -window $WID`) a **1440×900**: título **"Diagnóstico"**, sidebar resaltando Diagnóstico, sin fondo negro. Datos reales del daemon: FFmpeg y FFprobe 8.0.1, 226 encoders, 558 filtros, 8 núcleos, 324,7 GiB libres y daemon 0.1.0; acciones "Actualizar" (pill) y "Copiar informe" alineadas en la misma línea base.
 - Set definitivo: `01-convertir` · `02-cola` · `03-presets` · `04-ajustes` · `05-diagnostico` (todas 1440×900) · `06-convertir-960` (960×640).
+
+**L51 (corrida de control previa al tag) — completó y valida:**
+- Una corrida limpia, salida única por IPC (`~/cauce-ctl-<epoch>`), mismo preset que había fallado (`system-smarttv-compat`), daemon nuevo con `XDG_*` aislados.
+- Resultado: **state `completed`**, sin error, salida en `/home/wilkin/cauce-ctl-1794738973/sample-h264-aac.mp4`.
+- **ffprobe del archivo publicado**: vídeo `h264` 320×240, audio `aac` mono, duración **2,000 s**, tamaño **53 151 B**. Contenido y contenedor correctos.
+- Conclusión: el fallo anterior fue **del entorno de esa corrida** (carpeta de salida reutilizada entre pasadas), no del producto. No hay intermitencia reproducible en una corrida limpia.
+- **Deuda detectada y anotada**: el trabajo `completed` persiste `progress.percent = 96.0` en la base; la **vista** pinta 100 % (verificado en `02-cola`), pero el dato que devuelve la API queda en 96 al no fijarse 100 % en la transición a `completed`. Coherencia de datos a corregir en una unidad aparte; no bloquea el tag porque la UI muestra el estado correcto.
