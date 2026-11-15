@@ -22,16 +22,16 @@
 | ID | Nombre ES / EN | Contenedor | Video | Audio | Límite | Calidad | Notas |
 |---|---|---|---|---|---|---|---|
 | `system-smarttv-compat` | Smart TV — Máxima Compatibilidad / Maximum Compatibility | `mp4` | `h264` | `aac` | 1920×1080, 60 fps | CRF 21, audio 192k | Perfil high, yuv420p, 8-bit, HDR→SDR, subtítulos convertibles, 2 canales |
-| `system-smarttv-hevc` | Smart TV — Calidad Eficiente / Efficient Quality | `mkv` | `h265` | `aac` | 3840×2160 | CRF 24, audio 324k | 10-bit, HDR preservado, subtítulos preservados |
+| `system-smarttv-hevc` | Smart TV — Calidad Eficiente / Efficient Quality | `mkv` | `h265` | `aac` | 3840×2160 | CRF 24, audio 324k | hasta 10-bit (preserva si la fuente ya es 10-bit), HDR preservado, subtítulos preservados |
 | `system-youtube-social` | YouTube & Redes Sociales / YouTube & Social | `mp4` | `h264` | `aac` | 1920×1080 | CRF 18, audio 320k | Faststart, perfil high, yuv420p, HDR→SDR, sin subtítulos, 2 canales |
 | `system-archival-master` | Archivo / Máxima Calidad / Archival Master | `mkv` | `h265` | `copy` | Sin límite | CRF 18 | CPU, audio original, HDR preservado, subtítulos preservados |
 | `system-fast-compress` | Compresión Rápida / Fast Compression | `mp4` | `h265` | `aac` | 1920×1080 | CRF 26, audio 160k | Faststart, HDR→SDR, sin subtítulos, 2 canales |
 | `system-audio-mp3` | Extraer Audio — MP3 320k / Extract Audio — MP3 320k | `mp3` | `none` | `mp3` | — | Audio 320k | Conserva metadatos; sin video |
 | `system-audio-flac` | Extraer Audio — FLAC / Extract Audio — FLAC | `flac` | `none` | `flac` | — | Lossless | Conserva metadatos; sin video |
 | `system-apple-music-export` | Exportación Apple Music / Apple Music Export | `m4a` | `none` | `aac` | — | Audio 256k | Metadatos limpios; sin video |
-| `system-samsung-tv` | Samsung TV — 4K / Samsung TV — 4K | `mp4` | `h265` | `aac` | 3840×2160, 60 fps | CRF 22, audio 256k | 10-bit, HDR preservado, subtítulos convertibles, 6 canales, faststart |
-| `system-lg-tv` | LG TV — HEVC 4K / LG TV — HEVC 4K | `mkv` | `h265` | `aac` | 3840×2160, 60 fps | CRF 22, audio 256k | 10-bit, HDR preservado, subtítulos preservados, 6 canales |
-| `system-android-tv` | Android TV / Google TV | `mkv` | `h265` | `aac` | 3840×2160, 60 fps | CRF 23, audio 256k | 10-bit, HDR preservado, subtítulos preservados |
+| `system-samsung-tv` | Samsung TV — 4K / Samsung TV — 4K | `mp4` | `h265` | `aac` | 3840×2160, 60 fps | CRF 22, audio 256k | hasta 10-bit (preserva si la fuente ya es 10-bit), HDR preservado, subtítulos convertibles, 6 canales, faststart |
+| `system-lg-tv` | LG TV — HEVC 4K / LG TV — HEVC 4K | `mkv` | `h265` | `aac` | 3840×2160, 60 fps | CRF 22, audio 256k | hasta 10-bit (preserva si la fuente ya es 10-bit), HDR preservado, subtítulos preservados, 6 canales |
+| `system-android-tv` | Android TV / Google TV | `mkv` | `h265` | `aac` | 3840×2160, 60 fps | CRF 23, audio 256k | hasta 10-bit (preserva si la fuente ya es 10-bit), HDR preservado, subtítulos preservados |
 | `system-audio-alac` | Extraer Audio — ALAC / Extract Audio — ALAC | `m4a` | `none` | `alac` | — | Lossless | Conserva metadatos; sin video |
 | `system-audio-wav` | Extraer Audio — WAV PCM / Extract Audio — WAV PCM | `wav` | `none` | `pcm_s16le` | — | PCM 16-bit | Conserva metadatos; sin video |
 
@@ -83,6 +83,6 @@
 - Los presets de audio producen `video: remove`.
 - `system-smarttv-compat` y `system-youtube-social` producen `faststart` en MP4.
 - `system-archival-master` conserva audio cuando el contenedor lo permite.
-- `system-samsung-tv`, `system-lg-tv` y `system-android-tv` preservan HDR y seleccionan 10-bit.
+- `system-samsung-tv`, `system-lg-tv` y `system-android-tv` preservan HDR y conservan 10-bit cuando la fuente ya es 10-bit: `ConversionPlan.VideoPlan` (`contracts.md` §2.2) no declara bit depth, así que el plan no puede forzar 10-bit sobre una fuente de 8-bit.
 - Un preset con `hardware_preference: auto` en v0.1 termina en CPU y lo declara en `reasoning`.
 - Cambiar un preset no muta otro preset ni el catálogo del sistema.
