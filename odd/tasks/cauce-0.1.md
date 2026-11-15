@@ -502,3 +502,18 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **El validador dirigido rechazó esa corrección** y encontró una regresión real (R3-REG-001): la señal de cierre no identificaba la conexión, así que un cierre viejo podía tirar una conexión nueva. Estado final de la lineage: **escalated**. Se corrigió en trabajo ordinario etiquetando la señal con la generación de la conexión, y se agregó `a_timeout_does_not_poison_the_next_request`.
 - Hallazgos no bloqueantes registrados por el revisor y **no** corregidos en esta lineage (quedan como follow-ups): R1-001 (fallback de `XDG_RUNTIME_DIR` a un temporal del proceso permite suplantar el daemon), R1-002 (lectura sin tope de línea y canal de eventos sin límite), R3-002/R4-003 (no se emite evento de desconexión al cerrar el daemon, el banner queda oculto hasta el próximo sondeo), R3-003 (los smoke tests pasan si falta Xvfb), R4-001 (`call` no tiene plazo mientras se abre el socket o se escribe), R4-002 (el lector de una conexión descartada sobrevive).
 - Los dos últimos R4 son consecuencia del mismo diseño y se atacan en T16 cuando el cliente se conecte a un daemon real durante la UI.
+
+**L27 (T16 · C-041) — página Convertir y seis hallazgos cerrados:**
+- **Hallazgos de la review de T15 cerrados** (commits `2b27c65`, `6b3719b` + tests `b0b8b26`, `8bd6d9e`):
+  - **R1-001**: el cliente ya no cae a un temporal si falta `XDG_RUNTIME_DIR`; falla con `DAEMON_UNAVAILABLE` nombrando la variable. Test `refuses_to_guess_the_socket_path`.
+  - **R1-002**: línea acotada a 1 MiB y canal de eventos acotado a 256 (descarta lo viejo); `EVENT_BUFFER` público. Tests `closes_the_connection_on_an_oversized_line`, `event_buffer_is_bounded`.
+  - **R3-002/R4-003**: el lector emite `daemon.disconnected` y la ventana muestra el banner al instante, sin sondeo. Test `emits_a_disconnect_notification_when_the_daemon_closes`.
+  - **R3-003**: los smoke fallan si falta `xvfb-run`/`Xvfb`, con el comando de instalación en el mensaje.
+  - **R4-001**: un solo plazo cubre abrir socket, escribir y esperar; test `a_stalled_open_times_out`.
+  - **R4-002**: `Drop for Connection` aborta el lector. El test no tuvo RED previo porque el camino de descarte de R3-001 ya lo cubría; queda como invariante fijado.
+- **Página Convertir**: estado puro (`ConvertState`/`ConvertPhase`), expansión de carpetas de un nivel sin symlinks, resumen por archivo, `media.plan` con `reasoning[]` literal, presets desde `presets.list`, carpeta de salida desde `settings.get`, bloqueo con `sudo apt install ffmpeg` cuando faltan capacidades, spamnel de inspección, estados vacío/parcial/listo/error, accesibilidad por teclado y DnD.
+- Regla dura: añadir **nunca** inicia: solo `jobs.add`; `queue.resume`/`jobs.resume` quedan para T17. Test `queue_request_is_taken_once` y `queue_request_contains_every_accepted_input`.
+- RED: `unresolved import cauce_gui::pages::convert`. GREEN: 7 tests de conversión + 12 de cliente + 2 de smoke; suite **219/219**. Smoke real: `window-ready`, exit 0.
+- Se habilitó `gtk4` con `features = ["v4_10"]` (única forma de tener `GtkFileDialog` y `gdk::FileList` con GTK 4.22.4; sin features posteriores).
+- **Excepción de tamaño documentada**: `view.rs` (303) y `flows.rs` (358) son mutuamente dependientes (la vista llama a `flows::wire` y los flujos usan los widgets), así que entran en un mismo commit de **664** líneas. Los demás: 1, 345, 254 y 6.
+- Deuda anotada: el desplegable de presets es plano (agrupar por categoría es de la página Presets, T18) y la inspección muestra un spinner de página, no uno por fila, porque `media.inspect` responde el lote completo.
