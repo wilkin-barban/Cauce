@@ -2,6 +2,7 @@
 //!
 //! This crate knows nothing about GTK, sockets, SQLite or child processes.
 
+pub mod catalog;
 pub mod error;
 pub mod job;
 pub mod media;
@@ -13,6 +14,7 @@ pub mod time;
 
 mod validate;
 
+pub use catalog::system_presets;
 pub use error::{ErrorCode, JobError};
 pub use job::{Job, JobState, Progress};
 pub use media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
