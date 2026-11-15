@@ -645,3 +645,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
   - Ajustes: "Carpeta de salida" vacía aunque Convertir ya la fijó; ancho de tarjetas distinto al resto; el icono solapa el texto a 960 px.
   - Diagnóstico: "Actualizar"/"Copiar informe" con baseline inconsistente; artefacto suelto entre tarjetas; icono casi invisible.
 - La ventana se capturó a 1060×760 porque a 960×640 la CTA quedaba oculta; **el tamaño por defecto hay que revisarlo**.
+
+**L44 (correcciones visuales) — aplicadas y verificadas por tests; recaptura pendiente:**
+- Cerrados con test: (1) el plan queda en **una línea + desplegable "Detalles"**, y la CTA "Añadir a la cola" medida en **554 de 630 px** a 960×640, o sea visible; (2) Ajustes muestra la carpeta que Convertir fijó (valor compartido + `settings.set`, con test de sincronización); (3) un trabajo `completed` pinta **100 %** y "Completada" coherentes.
+- Cerrados sin test (presentación): preset con ellipsize y tooltip, texto secundario con `dim-label`, "Pausar cola" y "Abrir carpeta/archivo" como botones `pill`, `✕` con etiqueta accesible, "Nombre" duplicado eliminado en Presets y filas sin salto de línea, ancho de tarjetas unificado y acciones del encabezado alineadas, iconos de Diagnóstico corregidos (`utilities-system-monitor-symbolic` no existe → se reemplazó por uno presente).
+- Suite: **262/262**. `fmt` y `clippy -D warnings` limpios. Los tres cortes: 252 · 182 · 23.
+- **La recaptura falló y se descartó**: el guion volvió a dejar `jobs.list` vacío y las capturas 01/02/03 salieron casi idénticas (mismo frame), o sea que los clics no llegaron a las secciones con la ventana redimensionada. Se restauraron las capturas anteriores desde git (`git checkout -- odd/screenshots`) en vez de commitear imágenes inválidas. Las capturas de `odd/screenshots/` siguen siendo las de **antes** de estas correcciones y así queda anotado.
+- Artefacto "suelto" junto a títulos: el worker determinó que son restos de frame de 1-3 px en la posición del glifo de la página anterior, no reproducibles en código.
