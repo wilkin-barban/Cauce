@@ -794,3 +794,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Cola después de "Limpiar lista"**: se abrió el `AdwAlertDialog` y se intentó confirmar por geometría; `jobs.list` quedó en **1 → 1**, o sea que la limpieza no se ejecutó. La imagen posterior existe pero **no prueba el flujo**, así que no se commitea como "después de limpiar". El flujo está cubierto por `clear_finished_removes_only_terminal_jobs`, `clear_finished_is_atomic`, `jobs_clear_finished_over_ipc`, `clear_button_is_disabled_without_finished_jobs` y `clearing_reports_the_count`.
 - Se conserva la evidencia válida: `02-cola.png` con resumen y "Limpiar lista", y `01-convertir.png` como estado vacío.
 - Causa común de ambos límites: Xvfb sin escritorio real — el selector de archivos y los diálogos modales no aceptan bien la entrada sintética. En un escritorio real estas dos capturas son triviales.
+
+**L61 (nombre vacío por `&`) — causa, corrección y regresión:**
+- **Causa real**: `AdwActionRow::set_title`/`set_subtitle` interpretan **Pango markup**; `view.rs` pasaba `base_name(...)` y `summarize(...)` crudos, así que el `&` de `They Call Me Fáfnir | … Vocals & Nordic Atmosphere.mp4` rompía el markup y la fila quedaba sin nombre. GTK lo reportaba como *"Entity did not end with a semicolon; escape ampersand as &amp;"*.
+- **Corrección**: helper `file_row_texts(name, summary)` que escapa con `pages::escaped`; aplicado en `file_row`, `rejected_row` y la fila de carpeta de salida. Auditoría del resto: Presets, Diagnóstico y Ajustes ya escapaban sus `ActionRow`; la Cola usa `GtkLabel` y no se tocó.
+- **Test de regresión** con el nombre real y con uno hostil (`<`, `>`, `"`, `'`): el título no queda vacío y el round-trip por `pango::parse_markup` devuelve el texto exacto.
+- Suite **311/311**, `fmt` y `clippy -D warnings` limpios.
+- Captura con ese archivo seleccionado: **no** se pudo (el `GtkFileDialog` no se automatiza en Xvfb, ya documentado en L60); no se simuló.
