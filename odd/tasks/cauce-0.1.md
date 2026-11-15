@@ -547,3 +547,19 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - Conmutación en vivo: Ajustes persiste con `settings.set` y reconstruye la pila de páginas conservando la sección; título, sidebar, encabezados, banner y pie se repintan sin reiniciar.
 - **Deuda cerrada**: las 22 cadenas visibles que quedaban en `client.rs` y `queue/flows.rs` ahora salen del catálogo (18 claves nuevas en los tres idiomas). Barrido de literales: 0 cadenas visibles en esos dos archivos.
 - Corte: 1264 (crate de catálogos — excepción documentada: las tres tablas y el cargador no compilan por separado) · 178 · 258 · 202 · 161 · 179.
+
+**L31 (contratos queue.start y jobs.recover) — cerrados con tests:**
+- `queue.start` documentado en `contracts.md` §6 como **alias explícito de `queue.resume`**: activa la cola, el planificador toma el próximo `queued` en su tick, nunca duplica trabajos, nunca cambia `probing|running|paused|validating|cancelling`, y sobre cola activa es no-op con `{"paused": false}` y un único `queue.updated`. El daemon comparte un solo handler (`set_queue(false)`).
+- `jobs.recover` documentado en `contracts.md` §4/§6 y `ui-mvp.md` §5/§12: solo válido desde `interrupted`, aplica `JobAction::Recover` → `queued`, escribe evento con motivo `recovery`, no reanuda solo, e invalido desde cualquier otro estado con `INVALID_INPUT` no reintentable. `jobs.retry` intacto.
+- RED: 4 fallos en el daemon (`método desconocido queue.start`, `INTERNAL` en vez de `INVALID_INPUT` en recover) y 7 errores de compilación en la GUI (`no variant Recover`, `no method toggle`). GREEN: 37 tests de daemon + 49 de GUI; suite **251/251**. Catalanes a **224 claves** por idioma.
+- Tests nuevos: `queue_start_unpauses_and_keeps_the_jobs`, `queue_start_is_a_no_op_when_active`, `jobs_recover_requeues_an_interrupted_job_once`, `jobs_recover_rejects_other_states`, `recover_is_offered_only_for_interrupted`, `queue_start_label_depends_on_the_paused_flag`.
+- Corte: 283 (daemon) · 90 (GUI) · 15 (docs).
+
+**L32 (corrección visual desde la captura real) — dos defectos y un artefacto pendiente:**
+- Primera captura real en `ssh ubuntu` (Xvfb + daemon vivo) reveló dos defectos que ningún test veía:
+  1. **Doble barra de título** con controles de ventana duplicados.
+  2. Pie **"Daemon: sin conexión"** mientras el catálogo de presets cargaba por IPC.
+- Correcciones: la ventana ya no dibuja header propio; el sidebar tiene su barra sin controles y cada sección conserva la suya, así que hay **exactamente un** conjunto de controles. Y cualquier respuesta exitosa marca el cliente conectado; `daemon.disconnected`/`DAEMON_UNAVAILABLE` lo marcan desconectado. Tests `chrome_has_a_single_set_of_window_controls` (con sonda negativa), `a_successful_reply_marks_the_client_connected`, `a_disconnect_marks_the_client_disconnected`.
+- Suite tras la corrección: **254/254** en 55 suites. Captura nueva en `odd/cauce-g3.png`: una sola barra con controles y pie "Daemon: conectado".
+- **Artefacto cosmético pendiente, documentado y no iterado**: en la captura nueva aparece un icono ✖ suelto debajo del selector de preset, alrededor de la coordenada (720, 455) de 1440×900. Es el botón de cierre de un `AdwBanner` oculto que queda dibujado fuera de su contenedor. No afecta funcionalidad ni accesibilidad medidas, no lo detecta ningún test actual, y corregirlo requiere tocar la composición del banner en `window.rs`. **Pendiente de decisión del usuario**: corregir antes de v0.1 o aceptarlo como deuda cosmética.
+- Corte: 184 (fuentes) · 322 (tests).
