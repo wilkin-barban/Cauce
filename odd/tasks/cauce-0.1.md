@@ -706,3 +706,18 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **ffprobe del archivo publicado**: vídeo `h264` 320×240, audio `aac` mono, duración **2,000 s**, tamaño **53 151 B**. Contenido y contenedor correctos.
 - Conclusión: el fallo anterior fue **del entorno de esa corrida** (carpeta de salida reutilizada entre pasadas), no del producto. No hay intermitencia reproducible en una corrida limpia.
 - **Deuda detectada y anotada**: el trabajo `completed` persiste `progress.percent = 96.0` en la base; la **vista** pinta 100 % (verificado en `02-cola`), pero el dato que devuelve la API queda en 96 al no fijarse 100 % en la transición a `completed`. Coherencia de datos a corregir en una unidad aparte; no bloquea el tag porque la UI muestra el estado correcto.
+
+**L52 (bug de release: activación por socket) — causa real, corrección y verificación instalada:**
+- **Error observado**: `cauce.socket` ya escuchaba en `/run/user/1000/cauce/daemon.sock`; `cauce-daemon` hacía `bind()` sobre la misma ruta, salía 1 y systemd reintentaba. Journal literal: `cauce-daemon: ya hay un daemon escuchando en /run/user/1000/cauce/daemon.sock` + `code=exited, status=1/FAILURE`.
+- **Corrección en el daemon, no en el empaquetado**: `ListenerKind { Inherited, Bound(path) }`, `listen_fds_from_env()`, `inherited_listener(pid, fds)`, `listener()`, `release()`. Con `LISTEN_PID == pid` y `LISTEN_FDS >= 1` adopta **FD 3** con `from_raw_fd` + `UnixListener::from_std`, sin bindear ni desenlazar; solo se borra el socket cuando fue bindeado por el propio proceso. `main.rs` registra el modo activo.
+- **Verificación con el paquete instalado**: `install=0`, socket `srw-------` (0600), `cauce.socket` **active**, `initialize` respondió `protocol_version: 1`, `cauce.service` **active** con **NRestarts=0**. Sin loop.
+- **Causa de la confusión anterior**: `cargo-deb` **no está instalado en el host de QA**; el `.deb` se construye local y se copia. Por eso el "rebuild en ssh ubuntu" no producía artefacto y seguía instalado el paquete viejo de las 05:04.
+- Nuevo artefacto: `target/debian/cauce_0.1.0-1_amd64.deb`, **sha256 `17ffcbc557e0b6df4af3e7759a41b68daff4871e2e375986e7e5ba478a3886dc`**.
+
+**L53 (criterio nuevo: videos reales) — dos AV1+Opus 720p convertidos con el servicio instalado:**
+- Encolado por IPC sobre `/run/user/1000/cauce/daemon.sock` (el `GtkFileDialog` no se puede automatizar en Xvfb; paso manual documentado).
+- **`You don't learn | The Wolf Mother 2…`** → `system-smarttv-compat`: **MP4 H.264 1280×720, AAC 2 canales, 268,401 s, 58 779 573 B**.
+- **`They Call Me Fáfnir…`** → `system-smarttv-hevc`: **MKV HEVC 1280×720, AAC 2 canales, 225,823 s, 53 002 275 B**.
+- Ambos `completed`; verificación independiente con `ffprobe` (códec de vídeo y audio, resolución, duración y canales).
+- **Captura `02-cola-real.png`**: GUI contra el `XDG_RUNTIME_DIR` real, pie "Daemon: conectado", las dos filas con **"Completada"** y barra llena, "2 en total".
+- Observación: el porcentaje persistido sigue siendo el último muestreado (o 0 al final), coherente con la deuda de `progress.percent` de 0.1.1; la vista muestra 100 %.

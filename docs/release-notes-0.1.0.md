@@ -96,3 +96,16 @@ los logs viven en `$XDG_DATA_HOME/cauce/`.
 Este documento es el candidato, no un anuncio: falta la aprobación explícita del
 mantenedor para crear el tag, subir el `.deb` y publicar las notas. Nada de eso se
 hizo.
+
+## Real media verified (2026-11-15)
+
+Two non-fixture AV1 + Opus 1280×720 videos were converted through the **installed** package with systemd socket activation enabled:
+
+| Source | Preset | Output | ffprobe |
+| --- | --- | --- | --- |
+| `You don't learn | The Wolf Mother 2…` | Smart TV — Maximum Compatibility | MP4 | H.264 1280×720, AAC 2ch, 268.401 s, 58.8 MB |
+| `They Call Me Fáfnir…` | Smart TV — Efficient Quality | MKV | HEVC 1280×720, AAC 2ch, 225.823 s, 53.0 MB |
+
+Both jobs finished `completed`; the GUI showed "Daemon: conectado" against the real `XDG_RUNTIME_DIR` with both rows marked "Completada". `cauce.socket` was active with `NRestarts=0` after the socket-activation fix.
+
+Package checksum: `17ffcbc557e0b6df4af3e7759a41b68daff4871e2e375986e7e5ba478a3886dc`.
