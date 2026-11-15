@@ -543,3 +543,176 @@ fn corrupt_custom_preset_is_ignored_on_read() {
         CustomPresetRead::Ready(custom_preset())
     );
 }
+
+// The bulk clear of `jobs.clear_finished` (`docs/contracts.md` §6): one
+// transaction that deletes the finished jobs with their events and reservations.
+
+/// Drives `id` to `states`, storing the error a `failed` row requires first.
+fn drive_to(store: &mut Store, id: &str, states: &[JobState]) {
+    for state in states {
+        if *state == JobState::Failed {
+            let failure = JobError::new(
+                ErrorCode::ProcessFailed,
+                "FFmpeg terminó con error: exit status: 1",
+                true,
+            );
+            store
+                .set_error(id, &failure)
+                .expect("the schema needs the error before `failed`");
+        }
+        store
+            .transition(id, *state, "tests")
+            .unwrap_or_else(|error| panic!("transición a `{state:?}`: {}", error.message));
+    }
+}
+
+/// Every state of `docs/contracts.md` §4 with a legal path from `queued`.
+fn state_paths() -> [(&'static str, &'static [JobState]); 10] {
+    [
+        ("queued", &[]),
+        ("probing", &[JobState::Probing]),
+        ("running", &[JobState::Probing, JobState::Running]),
+        (
+            "paused",
+            &[JobState::Probing, JobState::Running, JobState::Paused],
+        ),
+        (
+            "validating",
+            &[JobState::Probing, JobState::Running, JobState::Validating],
+        ),
+        (
+            "cancelling",
+            &[JobState::Probing, JobState::Running, JobState::Cancelling],
+        ),
+        (
+            "completed",
+            &[
+                JobState::Probing,
+                JobState::Running,
+                JobState::Validating,
+                JobState::Completed,
+            ],
+        ),
+        (
+            "cancelled",
+            &[
+                JobState::Probing,
+                JobState::Running,
+                JobState::Cancelling,
+                JobState::Cancelled,
+            ],
+        ),
+        ("failed", &[JobState::Probing, JobState::Failed]),
+        (
+            "interrupted",
+            &[JobState::Probing, JobState::Running, JobState::Interrupted],
+        ),
+    ]
+}
+
+#[test]
+fn clear_finished_removes_only_terminal_jobs() {
+    let temp = TempDir::new("clear-finished");
+    let mut store = Store::open(&temp.db_path()).expect("open");
+    let mut ids = Vec::new();
+    for (name, path) in state_paths() {
+        let output = format!("/media/out/{name}.mp4");
+        let queued = job(JobState::Queued, &output);
+        store.insert_job(&queued).expect("insert");
+        drive_to(&mut store, &queued.id, path);
+        ids.push((name, queued.id));
+    }
+    assert_eq!(count(&store, "jobs"), 10, "un trabajo por estado");
+
+    let removed = store.clear_finished().expect("clear the finished jobs");
+
+    assert_eq!(removed, 4, "solo los cuatro estados terminados");
+    let remaining: Vec<String> = ids
+        .iter()
+        .filter(|(_, id)| store.get_job(id).expect("get").is_some())
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        remaining,
+        vec![
+            "queued",
+            "probing",
+            "running",
+            "paused",
+            "validating",
+            "cancelling"
+        ],
+        "un trabajo activo o en espera nunca se borra"
+    );
+    assert_eq!(count(&store, "jobs"), 6);
+    assert_eq!(
+        count(&store, "output_reservations"),
+        6,
+        "las reservas de los que quedan siguen ahí"
+    );
+    for (name, id) in &ids {
+        let trailing = events_of(&store, id);
+        if matches!(*name, "completed" | "cancelled" | "failed" | "interrupted") {
+            assert_eq!(trailing, 0, "`{name}` se llevó sus eventos");
+        } else {
+            assert!(trailing > 0, "`{name}` conserva su historia");
+        }
+    }
+
+    assert_eq!(
+        store.clear_finished().expect("clear again"),
+        0,
+        "sin terminados la limpieza borra cero"
+    );
+    assert_eq!(count(&store, "jobs"), 6, "y no toca a nadie");
+}
+
+#[test]
+fn clear_finished_is_atomic() {
+    let temp = TempDir::new("clear-atomic");
+    let mut store = Store::open(&temp.db_path()).expect("open");
+    let finished = job(JobState::Queued, "/media/out/atomic-finished.mp4");
+    store.insert_job(&finished).expect("insert");
+    drive_to(
+        &mut store,
+        &finished.id,
+        &[
+            JobState::Probing,
+            JobState::Running,
+            JobState::Validating,
+            JobState::Completed,
+        ],
+    );
+    let waiting = job(JobState::Queued, "/media/out/atomic-waiting.mp4");
+    store.insert_job(&waiting).expect("insert");
+    let before = (
+        count(&store, "jobs"),
+        count(&store, "job_events"),
+        count(&store, "output_reservations"),
+    );
+
+    // A deletion that fails halfway must leave the three tables as they were.
+    store
+        .connection()
+        .execute_batch(
+            "CREATE TRIGGER refuse_clear BEFORE DELETE ON jobs \
+             BEGIN SELECT RAISE(ABORT, 'la limpieza no puede terminar'); END;",
+        )
+        .expect("crear el disparador que falla");
+
+    let error = store
+        .clear_finished()
+        .expect_err("el borrado falla dentro de la transacción");
+    assert_eq!(error.code, ErrorCode::Internal, "{error:?}");
+
+    let after = (
+        count(&store, "jobs"),
+        count(&store, "job_events"),
+        count(&store, "output_reservations"),
+    );
+    assert_eq!(after, before, "la transacción no deja nada a medias");
+    assert!(
+        store.get_job(&finished.id).expect("get").is_some(),
+        "el trabajo terminado sigue en la tabla"
+    );
+}

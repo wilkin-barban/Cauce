@@ -30,6 +30,17 @@ const COUNT_ACTIVE: &str = "SELECT count(*) FROM jobs \
 /// referenced by the scheduler (`docs/data-model.md` §5).
 const REMOVABLE_REFUSED: [&str; 5] = ["probing", "running", "paused", "validating", "cancelling"];
 
+/// The finished states `jobs.clear_finished` deletes: the two terminal ones of
+/// `docs/contracts.md` §4 plus the two that only leave through a new attempt. It
+/// is exactly the complement of [`REMOVABLE_REFUSED`] inside that table, minus
+/// `queued`: a job that has not started yet is never swept away by a bulk clear.
+pub const FINISHED_STATES: [JobState; 4] = [
+    JobState::Completed,
+    JobState::Cancelled,
+    JobState::Failed,
+    JobState::Interrupted,
+];
+
 const DELETE_JOB_EVENTS: &str = "DELETE FROM job_events WHERE job_id = ?1";
 const DELETE_RESERVATION: &str = "DELETE FROM output_reservations WHERE job_id = ?1";
 const DELETE_JOB: &str = "DELETE FROM jobs WHERE id = ?1";

@@ -12,14 +12,15 @@ use cauce_core::{
     ConversionPlan, CustomPreset, DuplicatePolicy, ErrorCode, JobError, Language, MediaSnapshot,
     Progress, Settings, Theme,
 };
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter};
 use serde_json::Value as JsonValue;
 
 use crate::migrations::{self, MIGRATIONS, seed_system_presets};
 use crate::sql;
 use crate::sql_support::{
-    code_text, internal, json_error, plan_text, probe_text, progress_text, sql_error,
+    code_text, internal, json_error, plan_text, probe_text, progress_text, sql_error, state_text,
 };
+use crate::transitions::FINISHED_STATES;
 
 const BUSY_TIMEOUT_MS: u64 = 5_000;
 
@@ -200,6 +201,52 @@ impl Store {
             .execute(UPDATE_PROGRESS, params![id, encoded, now.as_str()])
             .map_err(|error| sql_error(error, "guardar el progreso"))?;
         require_row(changed, id)
+    }
+    /// Deletes every finished job with its events and its output reservation in a
+    /// single transaction (`docs/data-model.md` §3 and §5), and reports how many
+    /// jobs went.
+    ///
+    /// The set is [`FINISHED_STATES`], so `queued` and the states that still hold a
+    /// process are never touched. Nothing is refused: a clear over a list with no
+    /// finished job is a successful zero, and a failure half way rolls the whole
+    /// transaction back.
+    pub fn clear_finished(&mut self) -> Result<usize, JobError> {
+        let states: Vec<String> = FINISHED_STATES
+            .iter()
+            .map(|state| state_text(*state))
+            .collect::<Result<_, _>>()?;
+        let placeholders = vec!["?"; states.len()].join(", ");
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|error| sql_error(error, "abrir la transacción de limpieza"))?;
+        for (statement, context) in [
+            (
+                format!(
+                    "DELETE FROM job_events WHERE job_id IN \
+                     (SELECT id FROM jobs WHERE state IN ({placeholders}))"
+                ),
+                "borrar los eventos de los trabajos terminados",
+            ),
+            (
+                format!(
+                    "DELETE FROM output_reservations WHERE job_id IN \
+                     (SELECT id FROM jobs WHERE state IN ({placeholders}))"
+                ),
+                "liberar las reservas de los trabajos terminados",
+            ),
+            (
+                format!("DELETE FROM jobs WHERE state IN ({placeholders})"),
+                "borrar los trabajos terminados",
+            ),
+        ] {
+            tx.execute(&statement, params_from_iter(states.iter()))
+                .map_err(|error| sql_error(error, context))?;
+        }
+        let removed = tx.changes() as usize;
+        tx.commit()
+            .map_err(|error| sql_error(error, "confirmar la limpieza"))?;
+        Ok(removed)
     }
 }
 
