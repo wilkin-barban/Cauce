@@ -10,10 +10,10 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cauce_core::ErrorCode;
-use client::Client;
+use client::{Client, REQUEST_TIMEOUT};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -256,4 +256,57 @@ fn client_runtime(runtime: &tokio::runtime::Runtime, client: &Client) {
         .block_on(client.call("initialize", initialize_params()))
         .expect("la primera llamada responde");
     assert_eq!(result["protocol_version"], json!(1));
+}
+
+#[test]
+fn a_timed_out_request_closes_the_connection() {
+    // Review finding R3-001: a hung daemon must not leak the socket, the read
+    // task and the fd until some later request notices the connection is dead.
+    let _guard = lock_env();
+    let dir = RuntimeDir::new("timeout-closes");
+    let socket = dir.socket();
+    let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind del servidor");
+
+    let server = std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Read};
+
+        let (stream, _) = listener.accept().expect("aceptar la conexión");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .expect("plazo del servidor");
+        let mut reader = BufReader::new(stream);
+        let mut request = String::new();
+        reader.read_line(&mut request).expect("leer la petición");
+        assert!(
+            request.contains("initialize"),
+            "el cliente debe enviar la petición: {request}"
+        );
+
+        // No se responde: el cliente tiene que cerrar su extremo al vencer el plazo.
+        let mut rest = Vec::new();
+        let read = reader.read_to_end(&mut rest).expect("leer hasta el cierre");
+        (read, rest)
+    });
+
+    let runtime = runtime();
+    let client = Client::connect();
+    let started = Instant::now();
+    let error = runtime
+        .block_on(client.call("initialize", initialize_params()))
+        .expect_err("un daemon que no responde debe vencer el plazo");
+
+    assert_eq!(error.code, ErrorCode::DaemonUnavailable);
+    assert!(error.retryable, "un plazo vencido es reintentable");
+    assert!(
+        started.elapsed() >= REQUEST_TIMEOUT,
+        "el plazo real debe respetarse, transcurrió {:?}",
+        started.elapsed()
+    );
+
+    let (read, rest) = server.join().expect("el servidor termina");
+    assert_eq!(
+        read, 0,
+        "el cliente debe cerrar el socket (EOF), no dejarlo abierto"
+    );
+    assert!(rest.is_empty(), "no debe haber tráfico después del cierre");
 }

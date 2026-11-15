@@ -43,25 +43,61 @@ struct Request {
 }
 
 /// Requests awaiting an answer, keyed by the `id` the client chose.
-#[derive(Default)]
 struct Pending {
+    /// Abort handle of the connection's read task. A timed-out request aborts it
+    /// immediately so a hung daemon cannot leak the socket, the task and the fd
+    /// (review finding R3-001).
+    reader: Mutex<Option<tokio::task::AbortHandle>>,
+    /// Signals `supervise` to drop the live connection right away.
+    kill: async_channel::Sender<()>,
     slots: Mutex<HashMap<u64, Reply>>,
     /// Set to false when the reader sees the connection end or time out.
     alive: AtomicBool,
 }
 
 impl Pending {
-    fn new() -> Self {
+    fn new(kill: async_channel::Sender<()>) -> Self {
         Self {
             slots: Mutex::new(HashMap::new()),
             alive: AtomicBool::new(true),
+            reader: Mutex::new(None),
+            kill,
         }
+    }
+
+    /// Drops the live connection from the supervisor side, closing both halves.
+    fn close_connection(&self) {
+        self.alive.store(false, Ordering::SeqCst);
+        self.stop_reader();
+        let _ = self.kill.try_send(());
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Reply>> {
         self.slots
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn set_reader(&self, handle: tokio::task::AbortHandle) {
+        let mut reader = self
+            .reader
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *reader = Some(handle);
+    }
+
+    /// Aborts the read task and drops its half of the socket.
+    fn stop_reader(&self) {
+        let handle = {
+            let mut reader = self
+                .reader
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            reader.take()
+        };
+        if let Some(handle) = handle {
+            handle.abort();
+        }
     }
 
     fn register(&self, id: u64, reply: Reply) {
@@ -92,6 +128,7 @@ impl Connection {
     async fn open(
         socket: PathBuf,
         subscribers: Arc<Mutex<Vec<Subscriber>>>,
+        kill: async_channel::Sender<()>,
     ) -> Result<Self, JobError> {
         let stream = UnixStream::connect(&socket)
             .await
@@ -100,9 +137,10 @@ impl Connection {
                 socket.display()
             )))?;
         let (read, writer) = stream.into_split();
-        let pending = Arc::new(Pending::new());
+        let pending = Arc::new(Pending::new(kill));
         let reader = Arc::clone(&pending);
-        tokio::spawn(async move { read_loop(read, reader, subscribers).await });
+        let task = tokio::spawn(async move { read_loop(read, reader, subscribers).await });
+        pending.set_reader(task.abort_handle());
         Ok(Self { writer, pending })
     }
 
@@ -127,9 +165,11 @@ impl Connection {
         })?;
         line.push('\n');
         if let Err(error) = self.writer.write_all(line.as_bytes()).await {
+            self.pending.close_connection();
             return Err(unavailable_with_io(&error));
         }
         if let Err(error) = self.writer.flush().await {
+            self.pending.close_connection();
             return Err(unavailable_with_io(&error));
         }
         self.pending.register(id, request.reply);
@@ -137,7 +177,9 @@ impl Connection {
         tokio::spawn(async move {
             tokio::time::sleep(REQUEST_TIMEOUT).await;
             if let Some(reply) = pending.take(id) {
-                pending.alive.store(false, Ordering::SeqCst);
+                // A hung daemon must not keep the socket, the read task and the fd
+                // alive until the next request (review finding R3-001).
+                pending.close_connection();
                 let error = daemon_unavailable(
                     "El daemon no respondió a tiempo. Se descartó la conexión; probá de nuevo.",
                 );
@@ -319,12 +361,24 @@ async fn supervise(
 ) {
     let mut connection: Option<Connection> = None;
     let mut next_id = 0_u64;
-    while let Ok(request) = requests.recv().await {
+    let (kill_tx, kill_rx) = async_channel::unbounded::<()>();
+    loop {
+        let request = tokio::select! {
+            // A timed-out or broken connection is dropped here, not on the next call.
+            _ = kill_rx.recv() => {
+                connection = None;
+                continue;
+            }
+            request = requests.recv() => match request {
+                Ok(request) => request,
+                Err(_) => break,
+            },
+        };
         if connection.as_ref().is_some_and(|live| !live.is_alive()) {
             connection = None;
         }
         if connection.is_none() {
-            match Connection::open(socket_path(), Arc::clone(&subscribers)).await {
+            match Connection::open(socket_path(), Arc::clone(&subscribers), kill_tx.clone()).await {
                 Ok(fresh) => connection = Some(fresh),
                 Err(error) => {
                     let _ = request.reply.try_send(Err(error));
