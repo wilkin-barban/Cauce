@@ -79,7 +79,10 @@ fn validate_preset(preset: &Preset) -> Result<(), JobError> {
             ));
         }
     }
-    if preset.audio_codec != "copy" && !AUDIO_CODECS.contains(&preset.audio_codec.as_str()) {
+    if preset.audio_codec != "copy"
+        && preset.audio_codec != "none"
+        && !AUDIO_CODECS.contains(&preset.audio_codec.as_str())
+    {
         return invalid(format!(
             "el preset `{}` pide el códec de audio `{}`, fuera del alcance de v0.1",
             preset.id, preset.audio_codec
@@ -247,6 +250,15 @@ fn copy_blocker(stream: &VideoStream, preset: &Preset) -> Option<String> {
 }
 
 fn plan_audio(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<String>) -> AudioPlan {
+    // `audio_codec: none` drops the soundtrack (`docs/contracts.md` §2.2).
+    if preset.audio_codec == "none" {
+        reasoning.push(format!(
+            "audio: remove — el preset `{}` descarta el audio (`audio_codec: none`).",
+            preset.id
+        ));
+        return removed_audio();
+    }
+
     let Some(stream) = snapshot.audio_streams.first() else {
         reasoning.push("audio: remove — la entrada no declara ninguna pista de audio.".to_owned());
         return removed_audio();
@@ -457,11 +469,26 @@ fn cpu_video_encoder(codec: &str) -> Option<&'static str> {
         .map(|(_, encoder)| *encoder)
 }
 
-fn container_carries_video(container: &str, codec: &str) -> bool {
+pub(crate) fn container_carries_video(container: &str, codec: &str) -> bool {
     match container {
         "mp4" => matches!(codec, "h264" | "h265" | "av1"),
         "mkv" => matches!(codec, "h264" | "h265" | "av1" | "vp9"),
         "webm" => matches!(codec, "vp9" | "av1"),
+        _ => false,
+    }
+}
+
+/// Whether `container` can carry `codec` audio. It is the table the plan engine
+/// and [`crate::preset::CustomPreset::validate`] share, so a custom preset and a
+/// system preset can never disagree about what a container accepts.
+pub(crate) fn container_carries_audio(container: &str, codec: &str) -> bool {
+    match container {
+        "mp4" | "m4a" => matches!(codec, "aac" | "mp3" | "alac"),
+        "mkv" => matches!(
+            codec,
+            "aac" | "mp3" | "opus" | "flac" | "alac" | "pcm_s16le"
+        ),
+        "webm" => codec == "opus",
         _ => false,
     }
 }

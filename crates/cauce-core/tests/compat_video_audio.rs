@@ -5,8 +5,10 @@
 
 use cauce_core::compat::plan_conversion;
 use cauce_core::{
-    AudioStream, ConversionPlan, ErrorCode, MediaSnapshot, MetadataPolicy, Preset, StreamAction,
-    SubtitleAction, Timestamp, VideoStream, system_presets,
+    AudioStream, ConversionPlan, CustomAudio, CustomBitrate, CustomContainer, CustomPreset,
+    CustomQuality, CustomQualityLevel, CustomResolution, CustomSubtitles, CustomVideo, ErrorCode,
+    MediaSnapshot, MetadataPolicy, Preset, StreamAction, SubtitleAction, SubtitlePolicy, Timestamp,
+    VideoStream, system_presets,
 };
 
 fn probed_at() -> Timestamp {
@@ -349,4 +351,94 @@ fn audio_transcodes_use_the_real_ffmpeg_encoder() {
             "{preset_id} must use the FFmpeg encoder {encoder}"
         );
     }
+}
+
+/// The custom preset runs through the untouched engine (`docs/contracts.md` §2.3
+/// and §6: `media.plan` and `jobs.add` accept it like any system preset).
+#[test]
+fn custom_preset_maps_to_a_usable_preset() {
+    let custom = CustomPreset {
+        container: CustomContainer::Mkv,
+        video: CustomVideo::H265,
+        quality: CustomQuality::Level(CustomQualityLevel::High),
+        resolution: CustomResolution::P720,
+        audio: CustomAudio::Opus,
+        bitrate: Some(CustomBitrate::K256),
+        subtitles: CustomSubtitles::Keep,
+    };
+    let preset = custom.to_preset().expect("una combinación legal se mapea");
+
+    // Identity and presentation: one fixed id, three ratified names, own category.
+    assert_eq!(preset.id, "custom-1");
+    assert_eq!(preset.name_es, "Personalizado");
+    assert_eq!(preset.name_en, "Custom");
+    assert_eq!(preset.name_pt_br, "Personalizado");
+    assert_eq!(preset.category, "custom");
+    assert!(!preset.description_es.is_empty());
+    assert!(!preset.description_en.is_empty());
+    assert!(!preset.description_pt_br.is_empty());
+
+    // Every supported field travels to the `Preset` shape.
+    assert_eq!(preset.container, "mkv");
+    assert_eq!(preset.video_codec, "h265");
+    assert_eq!(preset.audio_codec, "opus");
+    assert_eq!(preset.video_quality, Some(20), "«alta» en libx265");
+    assert_eq!(preset.audio_bitrate.as_deref(), Some("256k"));
+    assert_eq!(
+        (preset.max_width, preset.max_height),
+        (Some(1280), Some(720))
+    );
+    assert_eq!(preset.subtitle_policy, SubtitlePolicy::PreserveCompatible);
+    assert!(!preset.faststart, "MKV no usa faststart");
+    assert!(preset.preserve_metadata);
+
+    // And it plans: H.264/AAC 1080p becomes H.265/Opus 720p inside MKV.
+    let input = snapshot(vec![video("h264", 1920, 1080, 8)], vec![audio("aac", 2)]);
+    let plan = plan_conversion(&input, &preset).expect("el plan debe resolverse");
+    assert_eq!(plan.container, "mkv");
+    assert_eq!(plan.video.action, StreamAction::Transcode);
+    assert_eq!(plan.video.encoder.as_deref(), Some("libx265"));
+    assert_eq!(plan.video.quality, Some(20));
+    assert_eq!(
+        (plan.video.max_width, plan.video.max_height),
+        (Some(1280), Some(720))
+    );
+    assert_eq!(plan.audio.action, StreamAction::Transcode);
+    assert_eq!(plan.audio.encoder.as_deref(), Some("libopus"));
+    assert_eq!(plan.audio.bitrate.as_deref(), Some("256k"));
+    assert_eq!(plan.metadata, MetadataPolicy::Preserve);
+    assert_invariants(&plan);
+
+    // `audio: none` removes the track through the same engine.
+    let silent = CustomPreset {
+        audio: CustomAudio::None,
+        bitrate: None,
+        subtitles: CustomSubtitles::Remove,
+        ..custom.clone()
+    };
+    let plan = plan_conversion(&input, &silent.to_preset().expect("legal")).expect("plan");
+    assert_eq!(plan.audio.action, StreamAction::Remove);
+    assert_eq!(plan.subtitles.action, SubtitleAction::Remove);
+    assert_invariants(&plan);
+
+    // `video: none` removes the picture, and MP4 keeps its faststart.
+    let audio_only = CustomPreset {
+        container: CustomContainer::Mp4,
+        video: CustomVideo::None,
+        audio: CustomAudio::Aac,
+        bitrate: Some(CustomBitrate::K192),
+        subtitles: CustomSubtitles::Remove,
+        ..custom.clone()
+    };
+    let preset = audio_only.to_preset().expect("legal");
+    assert!(preset.faststart, "MP4 y M4A usan faststart");
+    assert_eq!(preset.video_quality, None, "sin video no hay CRF");
+    let plan = plan_conversion(&input, &preset).expect("plan");
+    assert_eq!(plan.video.action, StreamAction::Remove);
+    assert_eq!(
+        plan.audio.action,
+        StreamAction::Copy,
+        "la fuente ya es AAC: se copia, no se recodifica"
+    );
+    assert_invariants(&plan);
 }

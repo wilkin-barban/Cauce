@@ -32,7 +32,11 @@ pub use plan::{
     AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
 };
-pub use preset::{DeviceFamily, HdrPolicy, Preset, SubtitlePolicy};
+pub use preset::{
+    CRF_RANGE, CustomAudio, CustomBitrate, CustomContainer, CustomPreset, CustomQuality,
+    CustomQualityLevel, CustomResolution, CustomSubtitles, CustomVideo, DeviceFamily, HdrPolicy,
+    Preset, SubtitlePolicy,
+};
 pub use probe::parse_ffprobe;
 pub use scheduler::next_startable;
 pub use settings::{DuplicatePolicy, Language, Settings, Theme};
