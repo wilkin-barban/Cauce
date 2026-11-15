@@ -133,6 +133,11 @@ fn wait_for<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> T {
     }
 }
 
+/// Number of lines the counter file holds right now; `0` while it is missing.
+fn counter_lines(file: &Path) -> usize {
+    fs::read_to_string(file).map_or(0, |body| body.lines().count())
+}
+
 fn wait_for_pid(file: &Path) -> u32 {
     wait_for("the fake binary to write its pid", || {
         fs::read_to_string(file).ok()?.trim().parse().ok()
@@ -204,6 +209,104 @@ fn resume_continues_the_process_group() {
     wait_for_state(pid, |state| state != Some('T'), "leaving `T`");
     // Resuming a child that is not paused is a no-op, not an error.
     child.resume().expect("a second resume must be a no-op");
+
+    child.cancel(Duration::from_secs(2)).expect("cancel");
+    wait_until_gone(pid);
+}
+
+#[test]
+fn pause_freezes_and_resume_continues_a_live_child() {
+    let dir = TempDir::new("live-pause");
+    let counter = dir.path().join("counter");
+    // One line every 20 ms for ~4 s: the fake outlives every assertion below, so
+    // `cancel` — not exhaustion — is what ends it.
+    let script = dir.script(&format!(
+        "#!/bin/bash\nfor i in $(seq 1 200); do\n  echo $i >> {}\n  sleep 0.02\ndone\n",
+        counter.display()
+    ));
+
+    let mut child = start(&script);
+    let pid = child.pid();
+    wait_for("the fake to append five counter lines", || {
+        (counter_lines(&counter) >= 5).then_some(())
+    });
+
+    child.pause().expect("pause must stop the process group");
+    let frozen = counter_lines(&counter);
+    thread::sleep(Duration::from_millis(250));
+    let after_pause = counter_lines(&counter);
+    // One write may still be in flight when `SIGSTOP` lands: the assertion is
+    // that the counter does not keep growing, not that it froze at the same byte.
+    assert!(
+        after_pause <= frozen + 1,
+        "the counter kept growing while paused: {frozen} -> {after_pause} lines"
+    );
+
+    child
+        .resume()
+        .expect("resume must continue the process group");
+    let resumed = wait_for("the counter to grow again after resume", || {
+        (counter_lines(&counter) > after_pause).then(|| counter_lines(&counter))
+    });
+    assert!(
+        resumed > after_pause,
+        "resume must restart the writes: stuck at {after_pause} lines"
+    );
+
+    child
+        .cancel(Duration::from_secs(2))
+        .expect("cancel must terminate the group");
+    wait_until_gone(pid);
+    assert!(
+        counter_lines(&counter) >= resumed,
+        "a cancelled child appends nothing more"
+    );
+}
+
+#[test]
+fn reports_exit_even_when_stderr_closes_early() {
+    let dir = TempDir::new("stderr-closed");
+    // stderr closes while the process is still alive, so the reader thread ends
+    // first and no stream-end marker can announce the exit.
+    let script = dir.script("#!/bin/sh\nexec 2>&-\nsleep 0.2\nexit 0\n");
+
+    let mut child = start(&script);
+    let status = wait_for("`try_exit` to report the closed-stderr exit", || {
+        child.try_exit().expect("`try_exit` must not fail")
+    });
+    assert!(status.success(), "the fake exits 0, got {status}");
+
+    let again = child.try_exit().expect("a second `try_exit` must not fail");
+    assert_eq!(
+        again,
+        Some(status),
+        "a second `try_exit` repeats the cached status instead of erroring"
+    );
+    assert_eq!(status.code(), Some(0), "the fake exits 0, got {status}");
+}
+
+#[test]
+fn try_exit_is_non_blocking_for_a_running_child() {
+    let dir = TempDir::new("try-exit");
+    let fake = fake(&dir, false);
+
+    let mut child = start(&fake.script);
+    let pid = wait_for_pid(&fake.pid);
+    wait_for_state(pid, |state| state == Some('S'), "state `S`");
+
+    let started = Instant::now();
+    for _ in 0..50 {
+        assert_eq!(
+            child.try_exit().expect("`try_exit` must not fail"),
+            None,
+            "a child that is still running has no exit status"
+        );
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "50 calls took {:?}: `try_exit` must never wait for a live child",
+        started.elapsed()
+    );
 
     child.cancel(Duration::from_secs(2)).expect("cancel");
     wait_until_gone(pid);
