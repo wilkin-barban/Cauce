@@ -54,13 +54,17 @@ async fn run() -> Result<(), String> {
     let orchestrator =
         spawn_orchestrator(Arc::clone(&daemon), config_for(&daemon).map_err(describe)?);
 
-    let path = socket::socket_path();
-    let listener = socket::bind(&path).await.map_err(describe_io)?;
-    daemon.events().log(
-        "info",
-        "daemon",
-        format!("escuchando en {}", path.display()),
-    );
+    // Socket activation first: when `cauce.socket` already listens, systemd
+    // passes that descriptor and binding the same path would fail with
+    // `AddrInUse`, which `Restart=on-failure` turns into a restart loop.
+    let (listener, kind) = socket::listener().await.map_err(describe_io)?;
+    let mode = format!("{} en {}", kind.label(), socket::socket_path().display());
+    daemon
+        .events()
+        .log("info", "daemon", format!("modo {mode}"));
+    // The ring is only visible through `logs.list`; stderr shows the same line
+    // so `journalctl --user -u cauce.service` tells the mode apart on its own.
+    eprintln!("cauce-daemon: modo {mode}");
 
     let serving = Arc::clone(&daemon);
     tokio::select! {
@@ -71,7 +75,9 @@ async fn run() -> Result<(), String> {
     // Dropping the task kills every FFmpeg process group (`docs/architecture.md` §18).
     orchestrator.abort();
     serving.events().log("info", "daemon", "detenido por señal");
-    let _ = std::fs::remove_file(&path);
+    // An inherited socket belongs to systemd (`cauce.socket`), so only the
+    // self-bound development socket is unlinked here.
+    socket::release(&kind);
     Ok(())
 }
 
