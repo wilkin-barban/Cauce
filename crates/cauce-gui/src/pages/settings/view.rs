@@ -7,8 +7,10 @@
 //! the widgets are re-rendered from the daemon's answer, so a rejected value
 //! reverts and the page cannot drift from the daemon.
 //!
-//! The theme is applied live through `AdwStyleManager::set_color_scheme`; the
-//! language is only persisted until `T19` wires the catalogs.
+//! The theme is applied live through `AdwStyleManager::set_color_scheme` and, since
+//! `T19`, so is the language: the daemon is still the owner of the value (the write
+//! goes through `settings.set`), and the answer is what switches the catalogs and
+//! asks the shell to rebuild its pages.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,17 +23,13 @@ use libadwaita as adw;
 use serde_json::json;
 
 use super::{
-    LANGUAGES, POLICIES, SettingsEdit, THEMES, apply_scheme, edit_error, edit_params, index_of,
-    language_at, policy_at, theme_at, wire,
+    LANGUAGE_LABELS, LANGUAGES, POLICIES, POLICY_LABELS, SettingsEdit, THEME_LABELS, THEMES,
+    apply_scheme, edit_error, edit_params, index_of, language_at, locale_of, policy_at, theme_at,
+    wire,
 };
 use crate::client::Client;
+use crate::i18n::t;
 use crate::pages::escaped;
-
-const THEME_LABELS: [&str; 3] = ["Sistema", "Claro", "Oscuro"];
-const LANGUAGE_LABELS: [&str; 3] = ["Español", "English", "Português (Brasil)"];
-const POLICY_LABELS: [&str; 3] = ["Añadir un sufijo", "Omitir el archivo", "Sobrescribir"];
-
-const OFFLINE: &str = "No se pudo leer la configuración del daemon.";
 
 /// Every widget the page needs after construction.
 #[derive(Clone)]
@@ -140,53 +138,56 @@ pub fn page(client: &Rc<Client>) -> adw::NavigationPage {
 
 fn build() -> Ui {
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new("Ajustes", "")));
+    header.set_title_widget(Some(&adw::WindowTitle::new(
+        t("section.settings_title"),
+        "",
+    )));
 
     let banner = adw::Banner::new("");
     banner.set_revealed(false);
 
     let loading = adw::StatusPage::new();
     loading.set_icon_name(Some("preferences-system-symbolic"));
-    loading.set_title("Cargando la configuración");
+    loading.set_title(t("settings.loading"));
     let error = adw::StatusPage::new();
     error.set_icon_name(Some("dialog-warning-symbolic"));
-    error.set_title("No se pudo leer la configuración");
-    error.set_description(Some(OFFLINE));
-    let retry = gtk::Button::with_label("Reintentar");
+    error.set_title(t("settings.error_title"));
+    error.set_description(Some(t("settings.offline")));
+    let retry = gtk::Button::with_label(t("settings.retry"));
     retry.add_css_class("pill");
     error.set_child(Some(&retry));
 
     let output = adw::ActionRow::new();
-    output.set_title("Carpeta de salida");
-    output.set_subtitle("Sin elegir");
-    let choose = gtk::Button::with_label("Elegir…");
+    output.set_title(t("settings.output_folder"));
+    output.set_subtitle(t("settings.not_chosen"));
+    let choose = gtk::Button::with_label(t("settings.choose"));
     choose.add_css_class("flat");
     output.add_suffix(&choose);
 
     let concurrency = adw::SpinRow::with_range(1.0, 8.0, 1.0);
-    concurrency.set_title("Trabajos simultáneos");
-    concurrency.set_subtitle("Entre 1 y 8 conversiones a la vez.");
+    concurrency.set_title(t("settings.concurrency"));
+    concurrency.set_subtitle(t("settings.concurrency_hint"));
 
-    let theme = combo_row("Tema", &THEME_LABELS);
-    let language = combo_row("Idioma", &LANGUAGE_LABELS);
+    let theme = combo_row(t("settings.theme"), &THEME_LABELS);
+    let language = combo_row(t("settings.language"), &LANGUAGE_LABELS);
     let notifications = adw::SwitchRow::new();
-    notifications.set_title("Notificaciones de escritorio");
-    notifications.set_subtitle("El daemon avisa una sola vez por trabajo terminado.");
-    let duplicates = combo_row("Archivos duplicados", &POLICY_LABELS);
-    duplicates.set_subtitle("Qué hacer cuando el destino ya existe.");
+    notifications.set_title(t("settings.notifications"));
+    notifications.set_subtitle(t("settings.notifications_hint"));
+    let duplicates = combo_row(t("settings.duplicates"), &POLICY_LABELS);
+    duplicates.set_subtitle(t("settings.duplicates_hint"));
     let keep_temp = adw::SwitchRow::new();
-    keep_temp.set_title("Conservar el temporal al fallar");
-    keep_temp.set_subtitle("Sirve para revisar una conversión fallida.");
+    keep_temp.set_title(t("settings.keep_temp"));
+    keep_temp.set_subtitle(t("settings.keep_temp_hint"));
 
     let general = adw::PreferencesGroup::new();
-    general.set_title("General");
+    general.set_title(t("settings.general_group"));
     general.add(&output);
     general.add(&concurrency);
     general.add(&theme);
     general.add(&language);
 
     let behavior = adw::PreferencesGroup::new();
-    behavior.set_title("Comportamiento");
+    behavior.set_title(t("settings.behavior_group"));
     behavior.add(&notifications);
     behavior.add(&duplicates);
     behavior.add(&keep_temp);
@@ -206,7 +207,7 @@ fn build() -> Ui {
     toolbar.add_top_bar(&banner);
     toolbar.set_content(Some(&stack));
 
-    let page = adw::NavigationPage::new(&toolbar, "Ajustes");
+    let page = adw::NavigationPage::new(&toolbar, t("section.settings_title"));
     page.set_tag(Some("settings"));
     Ui {
         page,
@@ -225,10 +226,14 @@ fn build() -> Ui {
     }
 }
 
-fn combo_row(title: &str, labels: &[&str]) -> adw::ComboRow {
+/// A combo whose entries are catalog keys: the visible text is translated here,
+/// the selection index still comes from the documented table
+/// (`THEMES`/`LANGUAGES`/`POLICIES`).
+fn combo_row(title: &str, labels: &[&'static str]) -> adw::ComboRow {
+    let texts: Vec<&str> = labels.iter().map(|key| t(key)).collect();
     let row = adw::ComboRow::new();
     row.set_title(title);
-    row.set_model(Some(&gtk::StringList::new(labels)));
+    row.set_model(Some(&gtk::StringList::new(&texts)));
     row
 }
 
@@ -343,6 +348,9 @@ fn render(ui: &Ui, settings: &Settings, guard: &Rc<Cell<bool>>) {
     ui.keep_temp.set_active(settings.keep_temp_on_failure);
     guard.set(false);
     apply_scheme(settings.theme);
+    // The daemon's answer is what switches the language, so the interface always
+    // follows the persisted value instead of a local guess.
+    crate::i18n::set_locale(locale_of(settings.language));
 }
 
 /// Inline error inside the page, never only a toast (`docs/ui-mvp.md` §9).
@@ -358,7 +366,7 @@ fn show_error(ui: &Ui, message: &str) {
 /// The folder dialog of the output directory.
 fn pick_folder(ui: &Ui, commit: &Commit) {
     let dialog = gtk::FileDialog::new();
-    dialog.set_title("Elegir carpeta de salida");
+    dialog.set_title(t("settings.folder_dialog"));
     let parent = ui
         .page
         .root()

@@ -11,12 +11,15 @@
 //!   the daemon's answer after each change, so a rejected value reverts and the
 //!   page never drifts from the daemon.
 //!
-//! The language is persisted only: `T19` wires the ES/EN/PT-BR catalogs, so
-//! choosing a locale here does not retranslate the interface yet.
+//! Since `T19` the language is not only persisted: [`view`] applies it live, so
+//! choosing a locale repaints the whole shell without a restart.
 
 use cauce_core::{DuplicatePolicy, Language, Settings, Theme};
+use cauce_i18n::Locale;
 use libadwaita as adw;
 use serde_json::json;
+
+use crate::i18n::t;
 
 pub mod view;
 
@@ -45,11 +48,11 @@ pub enum SettingsEdit {
 /// Why the daemon would reject this edit, or nothing when it is acceptable.
 pub fn edit_error(edit: &SettingsEdit) -> Option<String> {
     match edit {
-        SettingsEdit::MaxConcurrentJobs(jobs) if !(1..=8).contains(jobs) => Some(format!(
-            "La concurrencia va de 1 a 8 trabajos: {jobs} no es un valor válido."
-        )),
+        SettingsEdit::MaxConcurrentJobs(jobs) if !(1..=8).contains(jobs) => {
+            Some(t("settings.invalid_concurrency").replace("{jobs}", &jobs.to_string()))
+        }
         SettingsEdit::OutputDir(dir) if dir.trim().is_empty() => {
-            Some("Elegí una carpeta de salida antes de guardar.".to_owned())
+            Some(t("settings.invalid_output").to_owned())
         }
         _ => None,
     }
@@ -125,6 +128,34 @@ pub fn language_at(index: u32) -> Language {
         1 => Language::En,
         2 => Language::PtBr,
         _ => Language::Es,
+    }
+}
+
+/// Catalog keys of the three themes, in the order of [`THEMES`].
+pub const THEME_LABELS: [&str; 3] = [
+    "settings.theme_system",
+    "settings.theme_light",
+    "settings.theme_dark",
+];
+/// The three language names, always shown in their own language.
+pub const LANGUAGE_LABELS: [&str; 3] = [
+    "settings.language_es",
+    "settings.language_en",
+    "settings.language_pt_br",
+];
+/// Catalog keys of the three duplicate policies, in the order of [`POLICIES`].
+pub const POLICY_LABELS: [&str; 3] = [
+    "settings.policy_suffix",
+    "settings.policy_skip",
+    "settings.policy_overwrite",
+];
+
+/// The `Locale` of the settings contract, for the live switch.
+pub fn locale_of(language: Language) -> Locale {
+    match language {
+        Language::Es => Locale::Es,
+        Language::En => Locale::En,
+        Language::PtBr => Locale::PtBr,
     }
 }
 

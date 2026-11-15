@@ -6,7 +6,14 @@
 //! banner is the only error surface of the shell: a missing daemon is a
 //! non-blocking notice with a "Reconectar" action, never a crash and never the
 //! same thing as an empty page.
+//!
+//! Since T19 every visible sentence is a catalog key (`S8`). A locale change is
+//! applied by **rebuilding the page stack**: the pages are cheap, each one re-reads
+//! its state from the daemon, and dropping them is the only way to guarantee that
+//! no header, row, banner or tooltip keeps a stale language. The selected sidebar
+//! section is preserved across the rebuild.
 
+use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::rc::Rc;
 
@@ -18,6 +25,7 @@ use libadwaita as adw;
 use serde_json::json;
 
 use crate::client::{self, Client};
+use crate::i18n;
 use crate::pages;
 
 /// Application id, shared with the future desktop file (`C-050`).
@@ -29,8 +37,14 @@ const APP_ICON: &str = "io.github.wilkin.Cauce";
 /// Symbolic icon every Adwaita-based theme ships; used when `APP_ICON` is absent.
 const FALLBACK_ICON: &str = "video-x-generic-symbolic";
 
-/// Text of the banner when the socket cannot be reached (`docs/ui-mvp.md` §9).
-const OFFLINE_BANNER: &str = "No se pudo conectar con el daemon.";
+/// What the shell believes about the daemon, so the chrome can be repainted
+/// without asking again (`docs/ui-mvp.md` §9 and §12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    Online,
+    Offline,
+    Error,
+}
 
 /// Shows the window, creating it on the first activation.
 pub fn present(application: &adw::Application) {
@@ -53,109 +67,173 @@ pub fn app_icon() -> &'static str {
     FALLBACK_ICON
 }
 
+/// The widgets a locale change has to repaint, plus the page stack it rebuilds.
+#[derive(Clone)]
+struct Chrome {
+    content: Rc<RefCell<Vec<adw::NavigationPage>>>,
+    list: gtk::ListBox,
+    title: adw::WindowTitle,
+    banner: adw::Banner,
+    daemon_state: gtk::Label,
+    link: Rc<Cell<Link>>,
+}
+
+impl Chrome {
+    /// Repaints banner and footer from the last known daemon state.
+    fn paint(&self) {
+        self.banner
+            .set_button_label(Some(i18n::t("banner.reconnect")));
+        match self.link.get() {
+            Link::Online => {
+                self.banner.set_revealed(false);
+                self.daemon_state
+                    .set_label(i18n::t("window.daemon_connected"));
+            }
+            Link::Offline => {
+                self.banner.set_title(i18n::t("banner.daemon_down"));
+                self.banner.set_revealed(true);
+                self.daemon_state
+                    .set_label(i18n::t("window.daemon_offline_state"));
+            }
+            // The banner keeps the daemon's own message: it is data, not copy.
+            Link::Error => {
+                self.banner.set_revealed(true);
+                self.daemon_state.set_label(&format!(
+                    "{}: {}",
+                    i18n::t("diagnostics.report_daemon"),
+                    i18n::t("window.daemon_error")
+                ));
+            }
+        }
+    }
+
+    /// Drops and re-creates every page, then repaints the chrome around them.
+    fn relocalize(&self, client: &Rc<Client>) {
+        let selected = self.list.selected_row().map(|row| row.index()).unwrap_or(0);
+        while let Some(row) = self.list.row_at_index(0) {
+            self.list.remove(&row);
+        }
+        *self.content.borrow_mut() = pages::all(client);
+        for section in pages::SECTIONS.iter() {
+            self.list
+                .append(&sidebar_row(i18n::t(section.title_key), section.icon));
+        }
+        self.title.set_title(i18n::t("app.title"));
+        self.title.set_subtitle(i18n::t("app.subtitle"));
+        self.paint();
+        // Re-selecting the same index restores the section the user was reading.
+        let last = i32::try_from(pages::SECTIONS.len()).unwrap_or(1) - 1;
+        if let Some(row) = self.list.row_at_index(selected.clamp(0, last)) {
+            self.list.select_row(Some(&row));
+        }
+    }
+}
+
 fn build(application: &adw::Application) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .application(application)
-        .title("Cauce")
+        .title(i18n::t("app.title"))
         .default_width(960)
         .default_height(640)
         .build();
 
     let client = Rc::new(Client::connect());
-    let content = Rc::new(pages::all(&client));
+    let content: Rc<RefCell<Vec<adw::NavigationPage>>> = Rc::new(RefCell::new(pages::all(&client)));
 
-    let banner = adw::Banner::new(OFFLINE_BANNER);
-    banner.set_button_label(Some("Reconectar"));
+    let banner = adw::Banner::new(i18n::t("banner.daemon_down"));
+    banner.set_button_label(Some(i18n::t("banner.reconnect")));
     banner.set_revealed(false);
 
-    let daemon_state = gtk::Label::new(Some(OFFLINE_DAEMON_STATE));
+    let daemon_state = gtk::Label::new(Some(i18n::t("window.daemon_offline_state")));
     daemon_state.add_css_class("caption");
     daemon_state.add_css_class("dim-label");
 
+    let list = gtk::ListBox::new();
     let split = adw::NavigationSplitView::new();
     split.set_min_sidebar_width(200.0);
     split.set_max_sidebar_width(320.0);
-    split.set_sidebar(Some(&sidebar(&content, &split, &daemon_state)));
-    if let Some(first) = content.first() {
+    split.set_sidebar(Some(&sidebar(&content, &split, &list, &daemon_state)));
+    if let Some(first) = content.borrow().first() {
         split.set_content(Some(first));
     }
 
+    let title = adw::WindowTitle::new(i18n::t("app.title"), i18n::t("app.subtitle"));
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new(
-        "Cauce",
-        "Conversor multimedia nativo",
-    )));
+    header.set_title_widget(Some(&title));
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
     toolbar.set_content(Some(&split));
     window.set_content(Some(&toolbar));
 
-    // `daemon.status` notifications keep the footer truthful between probes, and
-    // the client-side `daemon.disconnected` event means the socket closed, so the
-    // banner appears immediately instead of waiting for the next probe
-    // (`docs/contracts.md` §7, review findings R3-002 and R4-003).
+    let chrome = Chrome {
+        content,
+        list,
+        title,
+        banner,
+        daemon_state,
+        link: Rc::new(Cell::new(Link::Offline)),
+    };
+
+    wire_events(&chrome, &client);
+    wire_retry(&chrome, &client);
+    wire_smoke(&window);
+    wire_locale(&chrome, &client);
+
+    window
+}
+
+/// `daemon.status` and `daemon.disconnected` keep banner and footer truthful
+/// between probes (`docs/contracts.md` §7, review findings R3-002 and R4-003).
+fn wire_events(chrome: &Chrome, client: &Rc<Client>) {
     let events = client.events();
-    let banner_for_events = banner.clone();
-    let state_for_events = daemon_state.clone();
+    let chrome = Rc::new(chrome.clone());
     glib::spawn_future_local(async move {
         while let Ok(event) = events.recv().await {
             match event.get("method").and_then(serde_json::Value::as_str) {
                 Some(client::DISCONNECTED_EVENT) => {
-                    banner_for_events.set_title(OFFLINE_BANNER);
-                    banner_for_events.set_revealed(true);
-                    state_for_events.set_label(OFFLINE_DAEMON_STATE);
+                    chrome.link.set(Link::Offline);
+                    chrome.paint();
                 }
-                // Any event from a live daemon proves the connection works, so the
-                // banner hides again as soon as the daemon answers.
+                // Any event from a live daemon proves the connection works.
                 Some(_) => {
-                    banner_for_events.set_revealed(false);
-                    state_for_events.set_label("Daemon: conectado");
+                    chrome.link.set(Link::Online);
+                    chrome.paint();
                 }
                 None => {}
             }
         }
     });
-
-    let banner_for_retry = banner.clone();
-    let state_for_retry = daemon_state.clone();
-    let client_for_retry = Rc::clone(&client);
-    let retry: Rc<dyn Fn()> = Rc::new(move || {
-        probe_daemon(&client_for_retry, &banner_for_retry, &state_for_retry);
-    });
-    let retry_on_click = Rc::clone(&retry);
-    banner.connect_button_clicked(move |_| retry_on_click());
-
-    let retry_on_map = Rc::clone(&retry);
-    let smoke = std::env::var_os("CAUCE_SMOKE").is_some_and(|value| value == "1");
-    let announced = Rc::new(std::cell::Cell::new(false));
-    window.connect_map(move |window| {
-        // Retrying on every activation keeps the banner honest after the daemon
-        // comes back without restarting Cauce.
-        retry_on_map();
-        if !smoke || announced.replace(true) {
-            return;
-        }
-        println!("window-ready");
-        let _ = std::io::stdout().flush();
-        let application = window.application();
-        glib::timeout_add_seconds_local(1, move || {
-            if let Some(application) = application.as_ref() {
-                application.quit();
-            }
-            glib::ControlFlow::Break
-        });
-    });
-
-    window
 }
 
-const OFFLINE_DAEMON_STATE: &str = "Daemon: sin conexión";
+/// The banner button asks `initialize` again, so a returning daemon is noticed
+/// without restarting Cauce.
+fn wire_retry(chrome: &Chrome, client: &Rc<Client>) {
+    let client = Rc::clone(client);
+    let chrome = Rc::new(chrome.clone());
+    chrome.banner.clone().connect_button_clicked(move |_| {
+        probe_daemon(&client, &chrome);
+    });
+}
 
-/// Sidebar: app identity, the five sections and the summarized daemon state.
+/// Rebuilds every page when the locale changes: registered once, fired by
+/// `i18n::set_locale` from the Ajustes page.
+fn wire_locale(chrome: &Chrome, client: &Rc<Client>) {
+    let client = Rc::clone(client);
+    let chrome = Rc::new(chrome.clone());
+    i18n::on_locale_change(Rc::new(move || {
+        // An idle hop lets the current signal handler return before its own page
+        // is dropped, so no callback runs on a widget that is already unparented.
+        let (client, chrome) = (Rc::clone(&client), Rc::clone(&chrome));
+        glib::idle_add_local_once(move || chrome.relocalize(&client));
+    }));
+}
+
+/// Sidebar list paired with the content stack: one row per documented section.
 fn sidebar(
-    content: &Rc<Vec<adw::NavigationPage>>,
+    content: &Rc<RefCell<Vec<adw::NavigationPage>>>,
     split: &adw::NavigationSplitView,
+    list: &gtk::ListBox,
     daemon_state: &gtk::Label,
 ) -> adw::NavigationPage {
     let identity = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -166,14 +244,13 @@ fn sidebar(
     let icon = gtk::Image::from_icon_name(app_icon());
     icon.set_pixel_size(32);
     identity.append(&icon);
-    identity.append(&gtk::Label::new(Some("Cauce")));
+    identity.append(&gtk::Label::new(Some(i18n::t("app.title"))));
 
-    let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.set_activate_on_single_click(true);
     list.set_vexpand(true);
     for section in pages::SECTIONS.iter() {
-        list.append(&sidebar_row(section.title, section.icon));
+        list.append(&sidebar_row(i18n::t(section.title_key), section.icon));
     }
 
     let footer = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -185,7 +262,7 @@ fn sidebar(
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.append(&identity);
-    body.append(&list);
+    body.append(list);
     body.append(&footer);
 
     let pages = Rc::clone(content);
@@ -195,15 +272,18 @@ fn sidebar(
             return;
         };
         let index = row.index();
-        if let Some(page) = usize::try_from(index).ok().and_then(|i| pages.get(i)) {
-            split.set_content(Some(page));
+        if let Some(page) = usize::try_from(index)
+            .ok()
+            .and_then(|index| pages.borrow().get(index).cloned())
+        {
+            split.set_content(Some(&page));
         }
     });
     if let Some(first) = list.row_at_index(0) {
         list.select_row(Some(&first));
     }
 
-    adw::NavigationPage::new(&body, "Cauce")
+    adw::NavigationPage::new(&body, i18n::t("app.title"))
 }
 
 /// One sidebar entry: a symbolic icon plus its label, so no control is icon-only.
@@ -223,10 +303,8 @@ fn sidebar_row(title: &str, icon: &str) -> gtk::ListBoxRow {
 }
 
 /// Asks the daemon for `initialize` and reflects the answer in banner and footer.
-fn probe_daemon(client: &Rc<Client>, banner: &adw::Banner, daemon_state: &gtk::Label) {
-    let client = Rc::clone(client);
-    let banner = banner.clone();
-    let daemon_state = daemon_state.clone();
+fn probe_daemon(client: &Rc<Client>, chrome: &Rc<Chrome>) {
+    let (client, chrome) = (Rc::clone(client), Rc::clone(chrome));
     glib::spawn_future_local(async move {
         let params = json!({
             "client_name": "cauce-gui",
@@ -235,30 +313,42 @@ fn probe_daemon(client: &Rc<Client>, banner: &adw::Banner, daemon_state: &gtk::L
         });
         match client.call("initialize", params).await {
             Ok(_) => {
-                banner.set_revealed(false);
-                daemon_state.set_label("Daemon: conectado");
+                chrome.link.set(Link::Online);
+                chrome.paint();
             }
             Err(error) => {
-                banner.set_title(&banner_text(&error));
-                banner.set_revealed(true);
-                daemon_state.set_label(&format!("Daemon: {}", state_text(&error)));
+                let state = match error.code {
+                    ErrorCode::DaemonUnavailable => Link::Offline,
+                    _ => Link::Error,
+                };
+                chrome.link.set(state);
+                chrome.paint();
+                if state == Link::Error {
+                    // A protocol failure speaks with the daemon's own words.
+                    chrome.banner.set_title(&error.message);
+                }
             }
         }
     });
 }
 
-/// Banner copy: the fixed sentence for an absent daemon, the daemon's own text
-/// for a protocol-level failure.
-fn banner_text(error: &cauce_core::JobError) -> String {
-    if error.code == ErrorCode::DaemonUnavailable {
-        return OFFLINE_BANNER.to_owned();
-    }
-    error.message.clone()
-}
-
-fn state_text(error: &cauce_core::JobError) -> &'static str {
-    match error.code {
-        ErrorCode::DaemonUnavailable => "sin conexión",
-        _ => "error",
-    }
+/// `CAUCE_SMOKE=1` prints `window-ready` on the first map and quits by itself, so
+/// the smoke test proves a window really opened (`T24`).
+fn wire_smoke(window: &adw::ApplicationWindow) {
+    let smoke = std::env::var_os("CAUCE_SMOKE").is_some_and(|value| value == "1");
+    let announced = Rc::new(Cell::new(false));
+    window.connect_map(move |window| {
+        if !smoke || announced.replace(true) {
+            return;
+        }
+        println!("window-ready");
+        let _ = std::io::stdout().flush();
+        let application = window.application();
+        glib::timeout_add_seconds_local(1, move || {
+            if let Some(application) = application.as_ref() {
+                application.quit();
+            }
+            glib::ControlFlow::Break
+        });
+    });
 }
