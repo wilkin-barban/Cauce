@@ -8,6 +8,8 @@ description = "Cauce native GTK4 and Libadwaita desktop interface"
 
 [dependencies]
 cauce-core = { path = "../cauce-core" }
+# Catalogs live in their own crate (`S8`): the GUI never holds a copy of a string.
+cauce-i18n = { path = "../cauce-i18n" }
 # System GTK 4.22 and libadwaita 1.9 (`docs/architecture.md` §13). No vendored
 # or bundled feature: the `.deb` links against the distribution libraries.
 gtk4 = { version = "0.11", features = ["v4_10"] }

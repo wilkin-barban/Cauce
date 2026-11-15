@@ -101,6 +101,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "cauce-core",
+ "cauce-i18n",
  "gtk4",
  "libadwaita",
  "serde",

@@ -5,5 +5,7 @@
 
 pub mod app;
 pub mod client;
+// `S8`: every widget string comes from the catalogs, never from this crate.
+pub mod i18n;
 pub mod pages;
 pub mod window;

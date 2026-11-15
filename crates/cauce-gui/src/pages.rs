@@ -5,7 +5,8 @@
 //! other three since T18. Each page owns its own file, so the shell only decides
 //! the sidebar order and the icon of each entry. Icons are symbolic names the
 //! Adwaita theme already ships: nothing here borrows an asset from another
-//! project.
+//! project. Since T19 an entry carries the *keys* of its names, never the names
+//! themselves, so switching the locale re-renders the sidebar.
 
 use std::rc::Rc;
 
@@ -23,8 +24,10 @@ pub mod settings;
 pub struct Section {
     /// Stable identifier, also the widget name used by tests.
     pub id: &'static str,
-    /// Sidebar label and page title.
-    pub title: &'static str,
+    /// Catalog key of the sidebar label and the page title.
+    pub title_key: &'static str,
+    /// Catalog key of the one-line description of the section.
+    pub description_key: &'static str,
     /// Symbolic icon shipped by the icon theme.
     pub icon: &'static str,
 }
@@ -33,27 +36,32 @@ pub struct Section {
 pub const SECTIONS: [Section; 5] = [
     Section {
         id: "convert",
-        title: "Convertir",
+        title_key: "section.convert_title",
+        description_key: "section.convert_description",
         icon: "video-x-generic-symbolic",
     },
     Section {
         id: "queue",
-        title: "Cola",
+        title_key: "section.queue_title",
+        description_key: "section.queue_description",
         icon: "view-list-symbolic",
     },
     Section {
         id: "presets",
-        title: "Presets",
+        title_key: "section.presets_title",
+        description_key: "section.presets_description",
         icon: "starred-symbolic",
     },
     Section {
         id: "diagnostics",
-        title: "Diagnóstico",
+        title_key: "section.diagnostics_title",
+        description_key: "section.diagnostics_description",
         icon: "utilities-system-monitor-symbolic",
     },
     Section {
         id: "settings",
-        title: "Ajustes",
+        title_key: "section.settings_title",
+        description_key: "section.settings_description",
         icon: "preferences-system-symbolic",
     },
 ];
