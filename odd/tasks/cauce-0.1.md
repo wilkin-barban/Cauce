@@ -626,3 +626,10 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - **Decisión**: se borraron esas cuatro capturas en vez de commitear evidencia inválida. Solo queda `01-convertir.png`, que sí es la página real del paquete instalado.
 - Causa raíz y arreglo: falta un **window manager** en el host de QA (`xdotool windowactivate` falla con "windowmanager claims not to support _NET_ACTIVE_WINDOW", y los diálogos modales no se gestionan como en un escritorio real). Instalar `openbox` (o similar) y repetir el guion es el camino; reintentar sin WM no aporta.
 - Consecuencia: **no hay lista de defectos visuales de Cola, Presets ni Ajustes** porque no se observaron. La conversión iniciada desde la UI tampoco se ejecutó.
+
+**L42 (QA con openbox) — foco resuelto, geometría rota por la decoración:**
+- `openbox` instalado; `xdotool windowactivate --sync` ahora responde `foco ok` (el error de `_NET_ACTIVE_WINDOW` desapareció).
+- **Falla nueva, diagnosticada**: `jobs.list` quedó vacío y las capturas `03/04/05` son **el mismo frame byte a byte** (46 417 B), o sea que los clics de la sidebar tampoco cambiaron de sección. Causa: openbox **reparenta la ventana con decoración**, así que el cliente se desplaza ~20-25 px respecto de las coordenadas que usé (medidas sin WM). Todo clic cae 20 px arriba de su objetivo.
+- Arreglo identificado, no ejecutado por presupuesto de contexto: calcular el desplazamiento con `xdotool getwindowgeometry --shell` (o `xwininfo -id $WID | grep Absolute`) y aplicar ese offset a todas las coordenadas, más verificar tras cada clic con `jobs.list`/captura que la sección cambió antes de continuar.
+- Se descartaron las cuatro capturas nuevas: no eran evidencia de Cola, Presets ni Ajustes. `odd/screenshots/` conserva solo `01-convertir.png`, que sigue siendo válida.
+- La conversión iniciada desde la UI **sigue sin ejecutarse**.
