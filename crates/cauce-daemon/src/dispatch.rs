@@ -6,37 +6,41 @@
 //!
 //! Known v0.1 gaps, all visible to the client:
 //!
-//! - `jobs.remove` returns `INTERNAL` "no disponible todavía": deleting a job
-//!   needs `Store::remove_job`, which does not exist yet (T13b).
-//! - `job.progress` and `log.entry` are not emitted: no conversion loop and no
-//!   file logging exist in this half of the task (T13b, T14).
+//! - `log.entry` is not emitted: the log ring is in memory and file logging is
+//!   T14 (`docs/architecture.md` §14).
 //! - `jobs.add` inserts one transaction per job, so the "insert nothing on a
 //!   collision" guarantee is enforced by planning every output against the
 //!   reserved set before the first insert; a reservation lost to a concurrent
 //!   writer between those two steps still aborts after the earlier inserts.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use cauce_core::{
     DuplicatePolicy, ErrorCode, Job, JobAction, JobError, JobState, MediaSnapshot, Progress,
     Settings, Timestamp, plan_conversion, resolve_output_path, system_presets,
 };
+use cauce_ffmpeg::runner::ConversionChild;
 use cauce_jobs::Store;
 use serde_json::{Value, json};
 
 use crate::events::Events;
+use crate::orchestrator::{CANCEL_GRACE, RunningJob};
 use crate::protocol::{self, PROTOCOL_VERSION};
 use crate::socket;
 
 /// Highest absolute priority accepted over IPC (`docs/contracts.md` §2.4).
 const PRIORITY_LIMIT: i32 = 1000;
 
-/// Daemon state: the single writer of the database plus the event bus.
+/// Daemon state: the single writer of the database, the event bus and the child
+/// processes the orchestrator owns in memory.
 pub struct Daemon {
-    store: Mutex<Store>,
-    events: Events,
+    store: Arc<Mutex<Store>>,
+    events: Arc<Events>,
     roots: Vec<PathBuf>,
+    /// Conversions in flight, keyed by job id (`docs/architecture.md` §7).
+    children: Mutex<HashMap<String, RunningJob>>,
 }
 
 impl Daemon {
@@ -50,9 +54,10 @@ impl Daemon {
             .filter_map(|root| root.canonicalize().ok())
             .collect();
         Self {
-            store: Mutex::new(store),
-            events: Events::new(),
+            store: Arc::new(Mutex::new(store)),
+            events: Arc::new(Events::new()),
             roots,
+            children: Mutex::new(HashMap::new()),
         }
     }
 
@@ -64,6 +69,24 @@ impl Daemon {
     /// job in a state the IPC surface cannot reach yet.
     pub fn store_mut(&self) -> MutexGuard<'_, Store> {
         self.store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A shareable store handle: the progress callbacks of a conversion outlive
+    /// the call that spawned it.
+    pub fn store_handle(&self) -> Arc<Mutex<Store>> {
+        Arc::clone(&self.store)
+    }
+
+    /// A shareable event handle, for the same reason.
+    pub fn events_handle(&self) -> Arc<Events> {
+        Arc::clone(&self.events)
+    }
+
+    /// The conversions in flight (`docs/architecture.md` §7).
+    pub fn children(&self) -> MutexGuard<'_, HashMap<String, RunningJob>> {
+        self.children
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -85,10 +108,7 @@ impl Daemon {
             "jobs.resume" => self.job_action(params, JobAction::Resume),
             "jobs.cancel" => self.job_action(params, JobAction::Cancel),
             "jobs.retry" => self.job_action(params, JobAction::Retry),
-            // Documented gap: the store has no removal method yet (T13b).
-            "jobs.remove" => Err(protocol::internal(
-                "Eliminar trabajos no disponible todavía: el store todavía no borra trabajos (T13b); usá `jobs.cancel` mientras tanto.",
-            )),
+            "jobs.remove" => self.jobs_remove(params),
             "queue.pause" => self.set_queue(true),
             "queue.resume" => self.set_queue(false),
             "logs.list" => self.logs_list(params),
@@ -321,14 +341,90 @@ impl Daemon {
 
     fn job_action(&self, params: Option<&Value>, action: JobAction) -> Result<Value, JobError> {
         let id = protocol::string_param(params, "id")?;
-        let job = self.store_mut().apply_action(&id, action)?;
+        // The process follows the request first, so the daemon never reports a
+        // state the child does not respect (`docs/architecture.md` §7).
+        let stopped = match action {
+            JobAction::Pause => self.control_child(&id, ConversionChild::pause),
+            JobAction::Resume => self.control_child(&id, ConversionChild::resume),
+            JobAction::Cancel => self.cancel_child(&id),
+            // Requeuing and recovery never touch a live child.
+            JobAction::Retry | JobAction::Recover => false,
+        };
+
+        let mut job = self.store_mut().apply_action(&id, action)?;
+        // Each transition is broadcast on its own, so a client sees `cancelling`
+        // before `cancelled` (`docs/contracts.md` §7).
         self.events.job_updated(&job);
+        if stopped && job.state == JobState::Cancelling {
+            // The process is gone: `cancelling -> cancelled` closes the cancel
+            // path (`docs/contracts.md` §4). Without a live child the job stays
+            // `cancelling`, because whoever owns the process must finish it.
+            job = self
+                .store_mut()
+                .transition(&id, JobState::Cancelled, "user")?;
+            self.events.job_updated(&job);
+        }
         self.events.log(
             "info",
             "queue",
             format!("trabajo `{id}` ahora en `{}`", job.state.as_str()),
         );
+        if matches!(
+            action,
+            JobAction::Pause | JobAction::Resume | JobAction::Cancel
+        ) {
+            broadcast_queue(self);
+        }
         protocol::encode(&job)
+    }
+
+    /// Runs `control` on the live child of `id`. Reports whether one existed;
+    /// a child that already exited is an expected race, not a request error.
+    fn control_child(
+        &self,
+        id: &str,
+        control: impl FnOnce(&mut ConversionChild) -> Result<(), JobError>,
+    ) -> bool {
+        let mut children = self.children();
+        let Some(running) = children.get_mut(id) else {
+            return false;
+        };
+        if let Err(error) = control(&mut running.child) {
+            self.events.log(
+                "warn",
+                "ffmpeg",
+                format!("trabajo `{id}`: {}", error.message),
+            );
+        }
+        true
+    }
+
+    /// `SIGTERM` then `SIGKILL` to the process group, and the handle is dropped:
+    /// the cancel path owns the job from here on.
+    fn cancel_child(&self, id: &str) -> bool {
+        let running = self.children().remove(id);
+        let Some(mut running) = running else {
+            return false;
+        };
+        if let Err(error) = running.child.cancel(CANCEL_GRACE) {
+            self.events.log(
+                "warn",
+                "ffmpeg",
+                format!("trabajo `{id}`: {}", error.message),
+            );
+        }
+        true
+    }
+
+    fn jobs_remove(&self, params: Option<&Value>) -> Result<Value, JobError> {
+        let id = protocol::string_param(params, "id")?;
+        let removed = self.store_mut().remove_job(&id)?;
+        if removed {
+            self.events
+                .log("info", "queue", format!("trabajo `{id}` eliminado"));
+        }
+        broadcast_queue(self);
+        Ok(json!({"removed": removed}))
     }
 
     fn set_queue(&self, paused: bool) -> Result<Value, JobError> {
@@ -371,7 +467,22 @@ impl Daemon {
     }
 }
 
-fn find_preset(id: &str) -> Result<&'static cauce_core::Preset, JobError> {
+/// Publishes the depth of the queue (`docs/contracts.md` §7 `queue.updated`).
+pub(crate) fn broadcast_queue(daemon: &Daemon) {
+    let counts = {
+        let store = daemon.store_mut();
+        store
+            .active_count()
+            .and_then(|running| Ok((running, store.list_jobs(Some(&[JobState::Queued]))?.len())))
+    };
+    if let Ok((running, queued)) = counts {
+        daemon
+            .events()
+            .queue_updated(daemon.events().queue_paused(), running, queued);
+    }
+}
+
+pub(crate) fn find_preset(id: &str) -> Result<&'static cauce_core::Preset, JobError> {
     system_presets()
         .iter()
         .find(|preset| preset.id == id)

@@ -11,6 +11,7 @@
 pub mod dispatch;
 pub mod events;
 pub mod ids;
+pub mod orchestrator;
 pub mod protocol;
 pub mod socket;
 
@@ -24,6 +25,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 pub use dispatch::Daemon;
 pub use events::{Event, Events, LogEntry};
+pub use orchestrator::OrchestratorConfig;
 
 /// Accepts connections until the listener or the caller goes away.
 ///
