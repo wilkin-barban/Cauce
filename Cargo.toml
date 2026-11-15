@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/cauce-core",
+    "crates/cauce-i18n",
+    "crates/cauce-ffmpeg",
+    "crates/cauce-jobs",
+    "crates/cauce-daemon",
+    "crates/cauce-gui",
+    "crates/cauce-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"

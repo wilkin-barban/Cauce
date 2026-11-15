@@ -1,0 +1,10 @@
+[package]
+name = "cauce-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pure Cauce domain: presets, compatibility, plans and output validation"
+
+[dev-dependencies]
+serde_json = "1"
