@@ -108,4 +108,4 @@ Two non-fixture AV1 + Opus 1280×720 videos were converted through the **install
 
 Both jobs finished `completed`; the GUI showed "Daemon: conectado" against the real `XDG_RUNTIME_DIR` with both rows marked "Completada". `cauce.socket` was active with `NRestarts=0` after the socket-activation fix.
 
-Package checksum: `17ffcbc557e0b6df4af3e7759a41b68daff4871e2e375986e7e5ba478a3886dc`.
+Package checksum: `ba5dedc0c892f153fb285a35c63af04c85c45536753e86c71ac44f355e039b2e` (rebuilt after the UX improvements: human error messages, real drop zone, preset categories and one custom preset).
