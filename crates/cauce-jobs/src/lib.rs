@@ -10,6 +10,7 @@ pub mod migrations;
 pub mod sql;
 pub mod sql_support;
 pub mod store;
+pub mod transitions;
 
 pub use migrations::{MIGRATIONS, Migration, run_migrations};
 pub use store::Store;
