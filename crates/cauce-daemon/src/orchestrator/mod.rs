@@ -59,4 +59,6 @@ pub fn config_for(daemon: &Daemon) -> Result<OrchestratorConfig, JobError> {
     })
 }
 
+mod tick;
 
+pub use tick::tick;
