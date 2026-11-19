@@ -2,7 +2,7 @@
 
 **Feature:** Cauce v0.1 — conversor multimedia para Ubuntu 26.04 (Rust + GTK4/Libadwaita, daemon propio, FFmpeg del sistema, `.deb`).
 **Autoridad normativa:** `docs/architecture.md`, `docs/contracts.md`, `docs/presets.md`, `docs/data-model.md`, `docs/ui-mvp.md`, `docs/parity.md`, `docs/backlog.md`, `docs/adr/`. Ninguna tarea puede contradecirlos; si una contradicción aparece, se registra en `## Log` y se frena hasta resolverla.
-**Estado:** plan aprobado por el usuario el 2026-11-14. Fases 1-5 sin implementar. `C-001` ya está completo (licencia y `NOTICE` en `main`).
+**Estado:** Fases 1-5 **implementadas y publicadas**. `v0.1.0` tagueado y con GitHub Release pública (2026-11-15), tras aprobación explícita del usuario. `C-001` completo desde el inicio. Pendientes de evidencia: capturas de `drag-over` y de "Limpiar lista" (imposibles en Xvfb) y la deuda `progress.percent` para 0.1.1. Ver `## Log` L54-L63.
 
 ---
 
@@ -814,3 +814,9 @@ Copiados de `architecture.md` §19 y `ui-mvp.md` §170-179; se marcan solo con e
 - GitHub Release **`Cauce v0.1.0`** publicada: https://github.com/wilkin-barban/Cauce/releases/tag/v0.1.0
 - Verificación por API y descarga real: assets `cauce_0.1.0-1_amd64.deb` (1 844 092 B) y `SHA256SUMS` (104 B); el sha256 del archivo **descargado desde el release** es `fb8ff68bca953b353729c535469b8d9f1a3eb649a4e5a687cc9a252d6599c7c1`, idéntico al local y al de `SHA256SUMS`.
 - Sin atribución de IA en commits ni en el release.
+
+**L64 (reconciliación de S15 con la publicación real) — sin acciones destructivas:**
+- **S15 decía**: *"No publiques release ni muevas tags hasta tener QA y mi aprobación."* La publicación de `v0.1.0` ocurrió **dentro de un pedido explícito del usuario** ("Publicá Cauce v0.1.0 ahora", con pasos 1-5: notas, `SHA256SUMS`, tag anotado, GitHub Release y verificación por API). Por lo tanto **no es un desvío**: es la aprobación explícita que S15 exigía, ejercida después de la QA (hash verificado tres veces, clean install, socket `0600`, cinco conversiones por IPC, dos videos AV1+Opus reales, smoke GUI+daemon, `check-package` OK).
+- Se actualiza la línea `**Estado**` del documento, que seguía diciendo "Fases 1-5 sin implementar".
+- **No** se borró ni movió el tag, **no** se tocó el release y **no** hubo `force-push`.
+- Queda registrado para trazabilidad: la aprobación fue conversacional, en el turno previo a la publicación, no un artefacto en el repo. Si el usuario quiere que la próxima vez exista una aprobación escrita previa en el ODD, es una regla a agregar, no un defecto de esta entrega.
