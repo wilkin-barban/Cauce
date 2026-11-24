@@ -4,7 +4,9 @@
 //! string and never a child process (`docs/architecture.md` §10, §15). Plans are
 //! built literally so the builder is tested in isolation from `plan_conversion`.
 
-use cauce_core::command::{REQUIRED_FILTERS, build_ffmpeg_args, tonemap_filter_chain};
+use cauce_core::command::{
+    HostFilters, REQUIRED_FILTERS, build_ffmpeg_args, tonemap_filter_chain,
+};
 use cauce_core::{
     AudioPlan, ConversionPlan, ErrorCode, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
@@ -28,6 +30,7 @@ fn audio(action: StreamAction, encoder: Option<&str>, index: Option<u32>) -> Aud
     AudioPlan {
         action, encoder: encoder.map(Into::into), bitrate: None, channels: None,
         stream_index: index, normalize: false,
+        filter: None,
     }
 }
 
@@ -116,7 +119,7 @@ fn builds_the_exact_argv_for_a_video_transcode() {
         TEMP,
     ]);
 
-    let actual = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let actual = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert_eq!(actual, expected);
 }
 
@@ -127,7 +130,7 @@ fn copies_streams_without_reencoding_flags() {
         audio(StreamAction::Copy, None, Some(1)),
         subs(SubtitleAction::Remove, None, None),
     );
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
 
     assert!(pair(&argv, "-c:v", "copy"), "{argv:?}");
     assert!(pair(&argv, "-c:a", "copy"), "{argv:?}");
@@ -145,7 +148,7 @@ fn removes_absent_stream_families() {
         audio(StreamAction::Remove, None, None),
         subs(SubtitleAction::Remove, None, None),
     );
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
 
     assert!(flag(&argv, "-vn"), "{argv:?}");
     assert!(flag(&argv, "-an"), "{argv:?}");
@@ -158,7 +161,7 @@ fn removes_absent_stream_families() {
         audio(StreamAction::Transcode, Some("libmp3lame"), Some(1)),
         subs(SubtitleAction::Remove, None, None),
     );
-    let argv = build_ffmpeg_args(INPUT, TEMP, &audio_only).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &audio_only, &HostFilters::ALL).expect("plan must build");
     assert!(flag(&argv, "-vn"), "{argv:?}");
     assert!(flag(&argv, "-sn"), "{argv:?}");
     assert!(!flag(&argv, "-an"), "{argv:?}");
@@ -172,12 +175,12 @@ fn emits_faststart_only_when_requested() {
         subs(SubtitleAction::Copy, Some("mov_text"), Some(2)),
     );
     conversion.faststart = false;
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert!(!flag(&argv, "-movflags"), "{argv:?}");
     assert!(!flag(&argv, "+faststart"), "{argv:?}");
 
     conversion.faststart = true;
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert!(pair(&argv, "-movflags", "+faststart"), "{argv:?}");
     assert_eq!(argv.last().map(String::as_str), Some(TEMP), "{argv:?}");
 }
@@ -191,11 +194,11 @@ fn strips_metadata_only_when_requested() {
     );
 
     conversion.metadata = MetadataPolicy::Strip;
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert!(pair(&argv, "-map_metadata", "-1"), "{argv:?}");
 
     conversion.metadata = MetadataPolicy::Preserve;
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert!(!flag(&argv, "-map_metadata"), "{argv:?}");
     assert!(!flag(&argv, "-1"), "{argv:?}");
 }
@@ -211,7 +214,7 @@ fn emits_the_scale_filter_without_upscaling() {
         subs(SubtitleAction::Remove, None, None),
     );
 
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert_eq!(
         arg_of(&argv, "-vf"),
         Some(
@@ -230,7 +233,7 @@ fn emits_hdr_chain_only_for_tone_map() {
         subs(SubtitleAction::Remove, None, None),
     );
 
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     let chain = arg_of(&argv, "-vf").expect("chain must be emitted");
     assert_eq!(chain, tonemap_filter_chain());
     assert!(chain.contains("zscale"), "{argv:?}");
@@ -242,7 +245,7 @@ fn emits_hdr_chain_only_for_tone_map() {
         audio(StreamAction::Remove, None, None),
         subs(SubtitleAction::Remove, None, None),
     );
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert!(!flag(&argv, "-vf"), "{argv:?}");
     assert!(!argv.iter().any(|arg| arg.contains("zscale")), "{argv:?}");
 }
@@ -277,7 +280,7 @@ fn rejects_unsupported_encoders() {
             audio_plan,
             subs(SubtitleAction::Remove, None, None),
         );
-        assert_plan_invalid(build_ffmpeg_args(INPUT, TEMP, &conversion), case);
+        assert_plan_invalid(build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL), case);
     }
 
     let bitmap_subtitles = plan(
@@ -290,7 +293,7 @@ fn rejects_unsupported_encoders() {
         ),
     );
     assert_plan_invalid(
-        build_ffmpeg_args(INPUT, TEMP, &bitmap_subtitles),
+        build_ffmpeg_args(INPUT, TEMP, &bitmap_subtitles, &HostFilters::ALL),
         "bitmap subtitle",
     );
 }
@@ -304,34 +307,36 @@ fn rejects_unsafe_paths() {
     );
 
     assert_plan_invalid(
-        build_ffmpeg_args("entrada.mp4", TEMP, &conversion),
+        build_ffmpeg_args("entrada.mp4", TEMP, &conversion, &HostFilters::ALL),
         "relative input",
     );
     assert_plan_invalid(
-        build_ffmpeg_args(INPUT, "salida.part", &conversion),
+        build_ffmpeg_args(INPUT, "salida.part", &conversion, &HostFilters::ALL),
         "relative temp",
     );
-    assert_plan_invalid(build_ffmpeg_args("", TEMP, &conversion), "empty input");
+    assert_plan_invalid(build_ffmpeg_args("", TEMP, &conversion, &HostFilters::ALL), "empty input");
     assert_plan_invalid(
-        build_ffmpeg_args(INPUT, "", &conversion),
+        build_ffmpeg_args(INPUT, "", &conversion, &HostFilters::ALL),
         "empty temp output",
     );
     assert_plan_invalid(
-        build_ffmpeg_args("/a\0b.mp4", TEMP, &conversion),
+        build_ffmpeg_args("/a\0b.mp4", TEMP, &conversion, &HostFilters::ALL),
         "NUL in input",
     );
     assert_plan_invalid(
-        build_ffmpeg_args(INPUT, "/a\0b.mp4", &conversion),
+        build_ffmpeg_args(INPUT, "/a\0b.mp4", &conversion, &HostFilters::ALL),
         "NUL in temp output",
     );
     assert_plan_invalid(
-        build_ffmpeg_args(INPUT, INPUT, &conversion),
+        build_ffmpeg_args(INPUT, INPUT, &conversion, &HostFilters::ALL),
         "temp equal to input",
     );
 }
 
 #[test]
-fn rejects_audio_normalization_in_v01() {
+fn accepts_audio_normalization_after_phase_0() {
+    // Phase 0 (BUG-001) lifted the v0.1 rule that refused every audio filter:
+    // `normalize` now reaches FFmpeg as `loudnorm` instead of aborting the job.
     let mut audio_plan = audio(StreamAction::Transcode, Some("aac"), Some(1));
     audio_plan.normalize = true;
     let conversion = plan(
@@ -340,12 +345,10 @@ fn rejects_audio_normalization_in_v01() {
         subs(SubtitleAction::Remove, None, None),
     );
 
-    let error = build_ffmpeg_args(INPUT, TEMP, &conversion).expect_err("normalize must fail");
-    assert_eq!(error.code, ErrorCode::PlanInvalid);
-    assert!(
-        error.message.to_lowercase().contains("normaliz"),
-        "message must name normalization: {error:?}"
-    );
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL)
+        .expect("normalize must no longer fail");
+    let chain = arg_of(&argv, "-af").expect("normalize must emit an audio filter");
+    assert!(chain.contains("loudnorm"), "got `{chain}`");
 }
 
 #[test]
@@ -378,7 +381,7 @@ fn never_repeats_the_input_flag() {
     ];
 
     for conversion in shapes {
-        let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+        let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
         assert_eq!(
             argv.iter().filter(|arg| *arg == "-i").count(),
             1,
@@ -401,7 +404,7 @@ fn emits_annex_a_levels_for_encoders_that_take_them() {
         let mut conversion = conversion;
         conversion.video.level = Some(41);
 
-        let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+        let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
         assert!(
             pair(&argv, "-level", "4.1"),
             "{encoder} must receive the Annex A level, got {argv:?}"
@@ -422,7 +425,7 @@ fn sends_the_x265_level_through_x265_params() {
     );
     conversion.video.level = Some(41);
 
-    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion).expect("plan must build");
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("plan must build");
     assert!(
         pair(&argv, "-x265-params", "level-idc=41"),
         "libx265 has no -level option, the level must travel in -x265-params: {argv:?}"
@@ -442,7 +445,7 @@ fn rejects_a_level_the_encoder_cannot_honor() {
     conversion.video.level = Some(41);
 
     let error =
-        build_ffmpeg_args(INPUT, TEMP, &conversion).expect_err("libsvtav1 cannot honor a level");
+        build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect_err("libsvtav1 cannot honor a level");
     assert_eq!(error.code, ErrorCode::PlanInvalid);
     assert!(error.message.contains("libsvtav1"), "{}", error.message);
 }
@@ -456,6 +459,6 @@ fn rejects_an_unknown_level_idc() {
     );
     conversion.video.level = Some(43);
 
-    let error = build_ffmpeg_args(INPUT, TEMP, &conversion).expect_err("43 is not a level_idc");
+    let error = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect_err("43 is not a level_idc");
     assert_eq!(error.code, ErrorCode::PlanInvalid);
 }

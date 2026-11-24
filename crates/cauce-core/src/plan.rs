@@ -43,6 +43,26 @@ pub struct AudioPlan {
     pub channels: Option<u8>,
     pub stream_index: Option<u32>,
     pub normalize: bool,
+    /// Audio filter the builder is allowed to emit, if any.
+    ///
+    /// Absent from every plan written before phase 0, and skipped when absent,
+    /// so a persisted v0.1 plan still round-trips byte for byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<AudioFilter>,
+}
+
+/// The audio filters the builder may emit.
+///
+/// v0.1 refused every audio filter, which left no way to fix a centre channel
+/// lost in a downmix. Phase 0 opens exactly this enum — never free-form filter
+/// text — so the allowlist stays closed (`docs/architecture-phases-0-and-1.md`
+/// §2 BUG-001).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioFilter {
+    /// Fold a >= 6 channel source into stereo with a front-centre boost, so the
+    /// dialogue stays intelligible on laptops, phones and headphones.
+    StereoDialogueBoost,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

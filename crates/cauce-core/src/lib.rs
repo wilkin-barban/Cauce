@@ -22,14 +22,14 @@ mod validate;
 
 pub use capabilities::Capabilities;
 pub use catalog::system_presets;
-pub use command::build_ffmpeg_args;
+pub use command::{HostFilters, audio_filter_chain, build_ffmpeg_args};
 pub use compat::plan_conversion;
 pub use error::{ErrorCode, JobError};
 pub use job::{Job, JobState, Progress};
 pub use media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
 pub use output::{resolve_output_path, temp_path, validate_output};
 pub use plan::{
-    AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
 };
 pub use preset::{

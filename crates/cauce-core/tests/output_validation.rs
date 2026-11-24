@@ -30,6 +30,7 @@ fn audio_plan(action: StreamAction, encoder: Option<&str>) -> AudioPlan {
     AudioPlan {
         action, encoder: encoder.map(Into::into), bitrate: Some("192k".into()),
         channels: None, stream_index: Some(1), normalize: false,
+        filter: None,
     }
 }
 

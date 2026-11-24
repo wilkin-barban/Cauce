@@ -5,7 +5,7 @@
 
 mod common;
 
-use cauce_core::command::{REQUIRED_ENCODERS, build_ffmpeg_args};
+use cauce_core::command::{HostFilters, REQUIRED_ENCODERS, build_ffmpeg_args};
 use cauce_core::{
     AudioPlan, Capabilities, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
     SubtitleAction, SubtitlePlan, VideoPlan,
@@ -68,6 +68,7 @@ fn audio_plan(encoder: &str) -> AudioPlan {
         channels: None,
         stream_index: Some(1),
         normalize: false,
+        filter: None,
     }
 }
 
@@ -136,8 +137,10 @@ fn required_encoders_match_the_builder_allowlists() {
                         channels: None,
                         stream_index: None,
                         normalize: false,
+                        filter: None,
                     },
                 ),
+                &HostFilters::ALL,
             )
         } else {
             build_ffmpeg_args(
@@ -150,6 +153,7 @@ fn required_encoders_match_the_builder_allowlists() {
                     },
                     audio_plan(encoder),
                 ),
+                &HostFilters::ALL,
             )
         };
 

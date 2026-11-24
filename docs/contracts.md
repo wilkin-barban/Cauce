@@ -50,7 +50,9 @@ Representa el resultado de `ffprobe` para un archivo:
 
 `VideoPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `quality?`, `max_width?`, `max_height?`, `fps?`, `pixel_format?`, `profile?`, `level?`, `hdr_action` (`preserve`/`tone_map_sdr`), `stream_index?`.
 
-`AudioPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `bitrate?`, `channels?`, `stream_index?`, `normalize?`.
+`AudioPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `bitrate?`, `channels?`, `stream_index?`, `normalize?`, `filter?`.
+
+`filter?` es un enumerado cerrado, nunca texto libre: `stereo_dialogue_boost` pide la matriz de downmix con realce del canal central que corrige el «audio mudo» de v0.1 ([`architecture-phases-0-and-1.md`](architecture-phases-0-and-1.md) §2 BUG-001). Se omite del JSON cuando no hay filtro, así que un plan persistido por v0.1 se sigue leyendo byte a byte igual.
 
 `SubtitlePlan`: `action` (`copy`/`transcode`/`remove`/`burn_in`), `encoder?`, `stream_index?`, `source_index?`.
 

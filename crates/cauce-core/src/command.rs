@@ -9,7 +9,7 @@
 
 use crate::error::{ErrorCode, JobError};
 use crate::plan::{
-    AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
 };
 
@@ -50,6 +50,45 @@ const BASE_ARGS: [&str; 8] = [
     "-nostats",
 ];
 
+/// The matrix that folds a >= 6 channel source into stereo while lifting the
+/// front centre, where film dialogue lives (`docs/architecture-phases-0-and-1.md`
+/// §2 BUG-001). `volume=1.8` compensates the headroom of a cinema mix.
+pub const DIALOGUE_BOOST_FILTER: &str =
+    "pan=stereo|FL=0.5*FL+0.85*FC+0.5*SL|FR=0.5*FR+0.85*FC+0.5*SR,volume=1.8";
+
+/// Single-pass EBU R128 target that `normalize` maps to. One pass keeps the
+/// conversion a single FFmpeg run; the two-pass variant needs a measurement
+/// pass the scheduler does not have.
+pub const LOUDNORM_FILTER: &str = "loudnorm=I=-16:TP=-1.5:LRA=11";
+
+/// The optional filters this host can actually run.
+///
+/// `cauce-core` never spawns a process, so `cauce-ffmpeg` derives this report
+/// from `Capabilities.filters` once and hands it to the builder. A filter the
+/// host lacks is never emitted (`docs/architecture-phases-0-and-1.md` §2
+/// BUG-005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostFilters {
+    pub zscale: bool,
+    pub loudnorm: bool,
+}
+
+impl HostFilters {
+    /// Every optional filter available: the assumption of a stock FFmpeg build.
+    pub const ALL: Self = Self {
+        zscale: true,
+        loudnorm: true,
+    };
+
+    /// Reads the report from the names `ffmpeg -filters` prints.
+    pub fn from_names<S: AsRef<str>>(names: &[S]) -> Self {
+        Self {
+            zscale: names.iter().any(|name| name.as_ref() == "zscale"),
+            loudnorm: names.iter().any(|name| name.as_ref() == "loudnorm"),
+        }
+    }
+}
+
 /// The HDR→SDR chain emitted by the builder, exposed so the capability gate
 /// checks exactly the string that FFmpeg will receive.
 pub fn tonemap_filter_chain() -> &'static str {
@@ -63,10 +102,12 @@ pub fn tonemap_filter_chain() -> &'static str {
 ///
 /// Rejects unsafe paths and anything outside the v0.1 allowlist with
 /// `PLAN_INVALID`; it never falls back to a default encoder or a shell.
+/// `filters` reports the optional filters this host can run.
 pub fn build_ffmpeg_args(
     input: &str,
     temp_output: &str,
     plan: &ConversionPlan,
+    filters: &HostFilters,
 ) -> Result<Vec<String>, JobError> {
     check_path(input, "input")?;
     check_path(temp_output, "temporary output")?;
@@ -75,12 +116,7 @@ pub fn build_ffmpeg_args(
             "the input path and the temporary output path must differ",
         ));
     }
-    if plan.audio.normalize {
-        return Err(invalid(
-            "audio normalization is not part of the v0.1 filter allowlist; \
-             refusing to ignore `normalize`",
-        ));
-    }
+    check_audio_filters(plan, filters)?;
 
     let mut args: Vec<String> = BASE_ARGS.iter().map(|arg| (*arg).to_string()).collect();
     args.push("-i".into());
@@ -111,6 +147,46 @@ pub fn build_ffmpeg_args(
 
 fn invalid(message: impl Into<String>) -> JobError {
     JobError::new(ErrorCode::PlanInvalid, message, false)
+}
+
+/// Refuses a filter request the plan or the host cannot honor, so a flag is
+/// never silently dropped (`docs/architecture-phases-0-and-1.md` §2 BUG-001).
+fn check_audio_filters(plan: &ConversionPlan, filters: &HostFilters) -> Result<(), JobError> {
+    let audio = &plan.audio;
+    if audio.filter.is_some() && audio.action != StreamAction::Transcode {
+        return Err(invalid(
+            "an audio filter needs an audio transcode; a copied or removed stream cannot be filtered",
+        ));
+    }
+    if !audio.normalize {
+        return Ok(());
+    }
+    if audio.action != StreamAction::Transcode {
+        return Err(invalid(
+            "`normalize` needs an audio transcode; a copied or removed stream cannot be filtered",
+        ));
+    }
+    if !filters.loudnorm {
+        return Err(invalid(
+            "`normalize` requires the `loudnorm` filter, and this FFmpeg build does not provide it",
+        ));
+    }
+    Ok(())
+}
+
+/// The audio filter chain of `plan`, comma-joined in the order it must run.
+///
+/// `None` when the plan asks for nothing: the builder then emits no `-af` at
+/// all, which is what every plan written before phase 0 expects.
+pub fn audio_filter_chain(plan: &AudioPlan) -> Option<String> {
+    let mut pieces: Vec<&'static str> = Vec::new();
+    if plan.filter == Some(AudioFilter::StereoDialogueBoost) {
+        pieces.push(DIALOGUE_BOOST_FILTER);
+    }
+    if plan.normalize {
+        pieces.push(LOUDNORM_FILTER);
+    }
+    (!pieces.is_empty()).then(|| pieces.join(","))
 }
 
 fn check_path(path: &str, role: &str) -> Result<(), JobError> {
@@ -273,6 +349,9 @@ fn push_audio(args: &mut Vec<String>, plan: &AudioPlan) -> Result<(), JobError> 
             }
             if let Some(channels) = plan.channels {
                 args.extend(["-ac".to_string(), channels.to_string()]);
+            }
+            if let Some(chain) = audio_filter_chain(plan) {
+                args.extend(["-af".to_string(), chain]);
             }
         }
     }

@@ -265,7 +265,7 @@ fn start(daemon: &Daemon, config: &OrchestratorConfig, job: &Job) -> Result<(), 
     let preset = daemon.preset(&job.preset_id)?;
     let plan = plan_conversion(&probe, &preset)?;
     let temp = temp_path(&job.output_path, &job.id)?;
-    let args = build_ffmpeg_args(&job.input_path, &temp, &plan)?;
+    let args = build_ffmpeg_args(&job.input_path, &temp, &plan, &config.host_filters)?;
 
     let running = {
         let mut store = daemon.store_mut();

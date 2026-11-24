@@ -68,6 +68,7 @@ fn conversion_plan_round_trips_and_keeps_reasoning() {
             channels: Some(2),
             stream_index: Some(1),
             normalize: false,
+            filter: None,
         },
         subtitles: SubtitlePlan {
             action: SubtitleAction::Remove,

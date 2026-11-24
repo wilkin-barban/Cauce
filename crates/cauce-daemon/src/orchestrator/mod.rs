@@ -16,9 +16,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use cauce_core::command::HostFilters;
 use cauce_core::{DuplicatePolicy, JobError};
 use cauce_ffmpeg::runner::ConversionChild;
-use cauce_ffmpeg::toolchain::Toolchain;
+use cauce_ffmpeg::toolchain::{self, Toolchain};
 
 use crate::dispatch::Daemon;
 
@@ -37,6 +38,10 @@ const REASON_SCHEDULER: &str = "scheduler";
 #[derive(Debug, Clone)]
 pub struct OrchestratorConfig {
     pub toolchain: Toolchain,
+    /// Optional filters of the host, probed once so a plan never asks for
+    /// a filter this FFmpeg cannot run (`docs/architecture-phases-0-and-1.md` §2
+    /// BUG-005).
+    pub host_filters: HostFilters,
     /// `max_concurrent_jobs` from the settings (`docs/architecture.md` §7).
     pub max_concurrent: u8,
     pub duplicate_policy: DuplicatePolicy,
@@ -52,8 +57,11 @@ pub struct RunningJob {
 /// Builds the configuration of a running daemon from its settings.
 pub fn config_for(daemon: &Daemon) -> Result<OrchestratorConfig, JobError> {
     let settings = daemon.store_mut().settings_get()?;
+    let toolchain = cauce_ffmpeg::locate()?;
+    let host_filters = HostFilters::from_names(&toolchain::filters(&toolchain)?);
     Ok(OrchestratorConfig {
-        toolchain: cauce_ffmpeg::locate()?,
+        toolchain,
+        host_filters,
         max_concurrent: settings.max_concurrent_jobs,
         duplicate_policy: settings.duplicate_policy,
     })

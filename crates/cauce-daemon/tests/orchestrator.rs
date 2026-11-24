@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cauce_core::{DuplicatePolicy, JobError, JobState};
+use cauce_core::{DuplicatePolicy, HostFilters, JobError, JobState};
 use cauce_daemon::orchestrator::{OrchestratorConfig, tick};
 use cauce_daemon::{Daemon, Event};
 use cauce_ffmpeg::toolchain::Toolchain;
@@ -115,6 +115,7 @@ impl Case {
             daemon,
             config: OrchestratorConfig {
                 toolchain,
+                host_filters: HostFilters::ALL,
                 max_concurrent: 1,
                 duplicate_policy: DuplicatePolicy::Suffix,
             },

@@ -138,6 +138,7 @@ fn plan() -> ConversionPlan {
             channels: None,
             stream_index: Some(1),
             normalize: false,
+            filter: None,
         },
         subtitles: SubtitlePlan {
             action: SubtitleAction::Remove,
