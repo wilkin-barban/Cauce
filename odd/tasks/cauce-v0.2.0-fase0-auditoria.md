@@ -117,3 +117,21 @@ Decisiones registradas:
 2. Normalización de códigos: alfa-3 → alfa-2 (incluye formas bibliográficas `fre`/`ger`/`dut`/`chi`…) y descarte de la región (`es-419`, `pt-BR`). Códigos desconocidos se comparan literalmente, nunca se adivinan.
 3. `Preset` no tiene campo de idioma para subtítulos, así que se reutiliza `preferred_audio_language` como "idioma preferido del usuario" y se documenta en el `reasoning`.
 4. Aviso de alcance: ningún preset del catálogo declara hoy `preferred_audio_language` (los 13 están en `null`) y el preset propio todavía no expone el campo. La corrección queda cableada y probada, pero **inerte en producción hasta que la Fase 1 exponga la selección de pistas en la UI/CLI**; sin eso, el usuario hispanohablante de *Oak Street* seguiría recibiendo la pista inglesa. Se anota como dependencia explícita de T1.5/T1.7.
+
+**L5** — T4 (BUG-004, `validate_output`). RED: `cargo test -p cauce-core --test output_validation` → 3 fallos (`the plan keeps one audio track but the output has two`, idem subtítulos, `the second audio track has an unexpected opus codec`). GREEN: 13 tests.
+Cambio real: el validador compara la **cantidad** de pistas de cada familia contra lo que declara el plan (`expected_*_tracks`, que en Fase 0 es 1 o 0) y verifica el códec de **todas** las pistas, no solo de `first()`. También la resolución máxima se chequea en todas las pistas de video. `check_family` se conserva porque sus mensajes distinguen mejor el caso "el plan declaró pistas y no hay ninguna".
+
+**L6** — T3 (BUG-003, subtítulos). RED: 3 fallos (`a container without subtitle support must degrade to removing them: JobError { code: PlanInvalid, … }`, el razonamiento del bitmap no nombraba el contenedor ni la indisponibilidad de burn-in, y no había aviso de estilos perdidos). GREEN: 11 tests.
+Decisiones registradas:
+1. `target_subtitle_codec` ausente ya no devuelve `Err(PlanInvalid)`: degrada a `removed_subtitles()` con línea de razonamiento. Un problema de subtítulos nunca puede abortar el video ni el audio (S10).
+2. El chequeo de compatibilidad pasó de "¿hay *alguna* pista incompatible?" a "¿es compatible *la pista seleccionada*?". Es la corrección coherente con BUG-002: solo se mapea una pista, así que las incompatibles que no se eligen son irrelevantes.
+3. El aviso de estilos perdidos se emite solo cuando el origen es `ass`/`ssa` y el destino `mov_text`, que es el único caso donde se pierde información visual.
+Burn-in y OCR siguen fuera de alcance (Fase 1).
+
+**L7** — T5 (BUG-005, tone mapping). RED: `error[E0277]: can't compare [&str; 5] with [&str; 4]` y `zscale is optional and must not be reported as missing: ["zscale"]`. GREEN: 19 tests en `command_contracts`, 10 en `toolchain`.
+Hallazgo importante: `REQUIRED_FILTERS` incluía `zscale`, de modo que la puerta de capacidades rechazaba justo los hosts sin `libzimg` que BUG-005 manda tolerar. Se quitó del contrato de filtros obligatorios y ahora `video_filter_chain` elige entre la cadena `zscale` y `native_tonemap_filter_chain()` (`tonemap=mobius,format=yuv420p`) según `HostFilters::zscale`, que el daemon derive de `ffmpeg -filters` al arrancar. La firma de `build_ffmpeg_args` no cambió.
+
+**L8** — T6 (BUG-006, temporales huérfanos). RED: `error[E0432]: no temp_belongs_to in the root` + `could not find recovery in cauce_jobs`. GREEN: 5 tests.
+Diseño: no se recorren directorios. El reconciliador consulta los trabajos en `interrupted`/`failed`/`cancelled` y borra solo el `temp_path` persistido de cada uno, y solo si `temp_belongs_to(path, job_id)` confirma que el nombre es exactamente `.cauce-<job_id>.part.<ext>`. Esa guarda es la red de seguridad contra una fila corrupta que apunte a un archivo del usuario. Corre en `main.rs` después de `mark_active_as_interrupted` y `release_inactive_reservations`, y loguea solo cuando hubo algo que hacer.
+
+**L9** — Puerta G1 y formato. `cargo fmt` y `cargo clippy` no existen en `/usr/bin/cargo` de este host; el usuario proveyó un toolchain hermético (`rustfmt 1.8.0`, `clippy 0.1.93`, `cargo-deb 3.8.0`) cuyo `PATH` se exporta por corrida. No se instala nada en el sistema.
