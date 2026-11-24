@@ -9,7 +9,7 @@
 use crate::error::{ErrorCode, JobError};
 use crate::media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
 use crate::plan::{
-    AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
     SubtitlePlan, VideoPlan,
 };
 use crate::preset::{HdrPolicy, Preset, SubtitlePolicy};
@@ -322,6 +322,16 @@ fn plan_audio(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<Str
         preset.audio_codec
     ));
 
+    let filter = downmix_filter(stream, preset);
+    if filter.is_some() {
+        reasoning.push(format!(
+            "audio: downmix — la fuente tiene {} canales y el destino es estéreo; se aplica 
+             `pan=stereo` con realce del canal central (diálogo) para que la voz no se pierda en 
+             parlantes de dos canales.",
+            stream.channels
+        ));
+    }
+
     AudioPlan {
         action: StreamAction::Transcode,
         encoder: Some(encoder.to_owned()),
@@ -329,6 +339,16 @@ fn plan_audio(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<Str
         channels: preset.audio_channels,
         stream_index: Some(stream.index),
         normalize: preset.normalize_audio,
+        filter,
+    }
+}
+
+/// A stereo target fed by a >= 6 channel source loses the centre channel unless
+/// the downmix is explicit (`docs/architecture-phases-0-and-1.md` §2 BUG-001).
+fn downmix_filter(stream: &AudioStream, preset: &Preset) -> Option<AudioFilter> {
+    match preset.audio_channels {
+        Some(2) if stream.channels >= 6 => Some(AudioFilter::StereoDialogueBoost),
+        _ => None,
     }
 }
 
@@ -340,6 +360,7 @@ fn copied_audio(stream: &AudioStream) -> AudioPlan {
         channels: None,
         stream_index: Some(stream.index),
         normalize: false,
+        filter: None,
     }
 }
 
@@ -351,6 +372,7 @@ fn removed_audio() -> AudioPlan {
         channels: None,
         stream_index: None,
         normalize: false,
+        filter: None,
     }
 }
 
