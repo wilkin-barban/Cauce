@@ -131,6 +131,25 @@ pub fn temp_path(output_path: &str, job_id: &str) -> Result<String, JobError> {
     ))
 }
 
+/// Pure guard checking whether `path` is an orphan temporary belonging to `job_id`.
+///
+/// Returns true only when the file name of `path` is exactly
+/// `.cauce-<job_id>.part.<non-empty extension>`. This guard protects user files
+/// from accidental deletion if a database row is corrupted.
+pub fn temp_belongs_to(path: &str, job_id: &str) -> bool {
+    if job_id.is_empty() || !is_safe_job_id(job_id) {
+        return false;
+    }
+    let Some(file_name) = Path::new(path).file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let prefix = format!(".cauce-{job_id}.part.");
+    let Some(extension) = file_name.strip_prefix(&prefix) else {
+        return false;
+    };
+    !extension.is_empty()
+}
+
 /// Checks the probe of the temporary against the plan and the source
 /// (`docs/architecture.md` §12). The first broken rule wins and its message
 /// names the rule, so the UI can explain the failure.

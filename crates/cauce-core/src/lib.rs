@@ -27,10 +27,10 @@ pub use compat::plan_conversion;
 pub use error::{ErrorCode, JobError};
 pub use job::{Job, JobState, Progress};
 pub use media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
-pub use output::{resolve_output_path, temp_path, validate_output};
+pub use output::{resolve_output_path, temp_belongs_to, temp_path, validate_output};
 pub use plan::{
-    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
-    SubtitlePlan, VideoPlan,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
+    SubtitleAction, SubtitlePlan, VideoPlan,
 };
 pub use preset::{
     CRF_RANGE, CustomAudio, CustomBitrate, CustomContainer, CustomPreset, CustomQuality,

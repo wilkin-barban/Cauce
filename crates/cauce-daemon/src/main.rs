@@ -39,6 +39,7 @@ async fn run() -> Result<(), String> {
     let mut store = Store::open(&socket::database_path()).map_err(describe)?;
     let interrupted = store.mark_active_as_interrupted().map_err(describe)?;
     store.release_inactive_reservations().map_err(describe)?;
+    let reconciled = cauce_jobs::recovery::reconcile_temp_files(&store).map_err(describe)?;
     let daemon = Arc::new(Daemon::new(store, socket::default_authorized_roots()));
 
     if interrupted > 0 {
@@ -46,6 +47,22 @@ async fn run() -> Result<(), String> {
             "warn",
             "recovery",
             format!("{interrupted} trabajos activos quedaron `interrupted`"),
+        );
+    }
+    if reconciled.removed > 0 || !reconciled.failures.is_empty() {
+        let level = if reconciled.failures.is_empty() {
+            "info"
+        } else {
+            "warn"
+        };
+        daemon.events().log(
+            level,
+            "recovery",
+            format!(
+                "reconciliación de temporales: {} eliminado(s), {} fallo(s)",
+                reconciled.removed,
+                reconciled.failures.len()
+            ),
         );
     }
 
