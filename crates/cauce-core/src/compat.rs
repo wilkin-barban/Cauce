@@ -259,7 +259,22 @@ fn plan_audio(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<Str
         return removed_audio();
     }
 
-    let Some(stream) = snapshot.audio_streams.first() else {
+    let Some(stream) = select_stream(
+        &snapshot.audio_streams,
+        preset,
+        "audio",
+        reasoning,
+        &|stream: &AudioStream| stream.index,
+        &|stream: &AudioStream| stream.language.as_deref(),
+        &|stream: &AudioStream| stream.is_default,
+        &|stream: &AudioStream| {
+            format!(
+                "{}, {} canales",
+                stream.language.as_deref().unwrap_or("sin idioma"),
+                stream.channels
+            )
+        },
+    ) else {
         reasoning.push("audio: remove — la entrada no declara ninguna pista de audio.".to_owned());
         return removed_audio();
     };
@@ -352,6 +367,131 @@ fn downmix_filter(stream: &AudioStream, preset: &Preset) -> Option<AudioFilter> 
     }
 }
 
+/// Documented priority order for every stream family: the preset's preferred
+/// language, then the default disposition, then the first track.
+///
+/// v0.1 took `.first()` unconditionally, so an international release always lost
+/// the user's language without saying so
+/// (`docs/architecture-phases-0-and-1.md` §2 BUG-002).
+#[allow(clippy::too_many_arguments)]
+fn select_stream<'a, T>(
+    streams: &'a [T],
+    preset: &Preset,
+    family: &str,
+    reasoning: &mut Vec<String>,
+    index: &dyn Fn(&T) -> u32,
+    language: &dyn Fn(&T) -> Option<&str>,
+    is_default: &dyn Fn(&T) -> bool,
+    describe: &dyn Fn(&T) -> String,
+) -> Option<&'a T> {
+    let first = streams.first()?;
+    let preferred = preset
+        .preferred_audio_language
+        .as_deref()
+        .and_then(normalized_language);
+
+    let (chosen, why) = match &preferred {
+        Some(preferred) => {
+            let matched = streams.iter().find(|stream| {
+                language(stream).and_then(normalized_language).as_deref() == Some(preferred.as_str())
+            });
+            match matched {
+                Some(stream) => (stream, format!("por coincidir con el idioma preferido `{preferred}`")),
+                None => match streams.iter().find(|stream| is_default(stream)) {
+                    Some(stream) => (
+                        stream,
+                        format!(
+                            "por ser la pista por defecto; ninguna coincide con `{preferred}`"
+                        ),
+                    ),
+                    None => (
+                        first,
+                        format!("por ser la primera pista; ninguna coincide con `{preferred}`"),
+                    ),
+                },
+            }
+        }
+        None => match streams.iter().find(|stream| is_default(stream)) {
+            Some(stream) => (stream, "por ser la pista por defecto".to_owned()),
+            None => (first, "por ser la primera pista".to_owned()),
+        },
+    };
+
+    // A single track needs no explanation; a real choice always leaves a trail.
+    if streams.len() > 1 || preferred.is_some() {
+        reasoning.push(format!(
+            "{family}: selección — pista {} ({}) {why}.",
+            index(chosen),
+            describe(chosen)
+        ));
+    }
+    Some(chosen)
+}
+
+/// ISO 639 aliases the selector folds together: every three-letter code maps to
+/// its two-letter equivalent, including the legacy bibliographic forms (`fre`,
+/// `ger`, `dut`, …). A region subtag is dropped before comparing, so `es-419`,
+/// `es-ES` and `spa` all mean Spanish (`docs/architecture-phases-0-and-1.md` §2
+/// BUG-002).
+const LANGUAGE_ALIASES: [(&str, &str); 40] = [
+    ("eng", "en"),
+    ("spa", "es"),
+    ("fra", "fr"),
+    ("fre", "fr"),
+    ("deu", "de"),
+    ("ger", "de"),
+    ("ita", "it"),
+    ("jpn", "ja"),
+    ("por", "pt"),
+    ("zho", "zh"),
+    ("chi", "zh"),
+    ("kor", "ko"),
+    ("rus", "ru"),
+    ("ara", "ar"),
+    ("hin", "hi"),
+    ("tur", "tr"),
+    ("pol", "pl"),
+    ("nld", "nl"),
+    ("dut", "nl"),
+    ("swe", "sv"),
+    ("nor", "no"),
+    ("dan", "da"),
+    ("fin", "fi"),
+    ("ces", "cs"),
+    ("cze", "cs"),
+    ("ell", "el"),
+    ("gre", "el"),
+    ("heb", "he"),
+    ("tha", "th"),
+    ("vie", "vi"),
+    ("ukr", "uk"),
+    ("ron", "ro"),
+    ("rum", "ro"),
+    ("hun", "hu"),
+    ("ind", "id"),
+    ("msa", "ms"),
+    ("may", "ms"),
+    ("cat", "ca"),
+    ("fas", "fa"),
+    ("per", "fa"),
+];
+
+/// Two-letter form of `code`, or `None` when it names no known language.
+fn normalized_language(code: &str) -> Option<String> {
+    let lowered = code.trim().to_ascii_lowercase();
+    let base = lowered.split(['-', '_']).next().unwrap_or_default();
+    if base.is_empty() || matches!(base, "und" | "unk" | "unknown" | "zxx" | "mul") {
+        return None;
+    }
+    let canonical = LANGUAGE_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == base)
+        .or_else(|| LANGUAGE_ALIASES.iter().find(|(_, canonical)| *canonical == base))
+        .map(|(_, canonical)| *canonical)
+        .unwrap_or(base);
+    Some(canonical.to_owned())
+}
+
 fn copied_audio(stream: &AudioStream) -> AudioPlan {
     AudioPlan {
         action: StreamAction::Copy,
@@ -381,12 +521,6 @@ fn plan_subtitles(
     preset: &Preset,
     reasoning: &mut Vec<String>,
 ) -> Result<SubtitlePlan, JobError> {
-    let Some(first) = snapshot.subtitle_streams.first() else {
-        reasoning
-            .push("subtítulos: remove — la entrada no declara pistas de subtítulos.".to_owned());
-        return Ok(removed_subtitles());
-    };
-
     if preset.subtitle_policy == SubtitlePolicy::Remove {
         reasoning.push(format!(
             "subtítulos: remove — el preset `{}` no transporta subtítulos (`subtitle_policy: remove`).",
@@ -394,6 +528,26 @@ fn plan_subtitles(
         ));
         return Ok(removed_subtitles());
     }
+
+    let Some(selected) = select_stream(
+        &snapshot.subtitle_streams,
+        preset,
+        "subtítulos",
+        reasoning,
+        &|stream: &SubtitleStream| stream.index,
+        &|stream: &SubtitleStream| stream.language.as_deref(),
+        &|stream: &SubtitleStream| stream.is_default,
+        &|stream: &SubtitleStream| {
+            stream
+                .language
+                .clone()
+                .unwrap_or_else(|| "sin idioma".to_owned())
+        },
+    ) else {
+        reasoning
+            .push("subtítulos: remove — la entrada no declara pistas de subtítulos.".to_owned());
+        return Ok(removed_subtitles());
+    };
 
     let target = target_subtitle_codec(&preset.container).ok_or_else(|| {
         JobError::new(
@@ -413,13 +567,13 @@ fn plan_subtitles(
 
     let Some(incompatible) = incompatible else {
         reasoning.push(format!(
-            "subtítulos: copy — todas las pistas ya son compatibles con `{}`.",
+            "subtítulos: copy — la pista seleccionada ya es compatible con `{}`.",
             preset.container
         ));
         return Ok(SubtitlePlan {
             action: SubtitleAction::Copy,
             encoder: None,
-            stream_index: Some(first.index),
+            stream_index: Some(selected.index),
             source_index: None,
         });
     };
@@ -436,7 +590,7 @@ fn plan_subtitles(
         action: SubtitleAction::Transcode,
         encoder: Some(target.to_owned()),
         stream_index: None,
-        source_index: Some(first.index),
+        source_index: Some(selected.index),
     })
 }
 
