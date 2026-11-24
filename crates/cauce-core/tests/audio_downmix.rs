@@ -7,8 +7,8 @@
 
 use cauce_core::command::{HostFilters, audio_filter_chain, build_ffmpeg_args};
 use cauce_core::{
-    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
-    SubtitlePlan, VideoPlan,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
+    SubtitleAction, SubtitlePlan, VideoPlan,
 };
 
 const INPUT: &str = "/home/wilkin/Vídeos/entrada.mkv";
@@ -66,7 +66,11 @@ fn arg_of<'a>(argv: &'a [String], flag: &str) -> Option<&'a str> {
 
 #[test]
 fn dialogue_boost_chain_is_the_documented_matrix() {
-    let audio = audio_plan(StreamAction::Transcode, Some(AudioFilter::StereoDialogueBoost), false);
+    let audio = audio_plan(
+        StreamAction::Transcode,
+        Some(AudioFilter::StereoDialogueBoost),
+        false,
+    );
 
     assert_eq!(audio_filter_chain(&audio).as_deref(), Some(DIALOGUE_BOOST));
 }

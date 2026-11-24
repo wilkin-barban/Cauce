@@ -41,7 +41,10 @@ fn subtitle(index: u32, language: Option<&str>, is_default: bool) -> SubtitleStr
     }
 }
 
-fn snapshot(audio_streams: Vec<AudioStream>, subtitle_streams: Vec<SubtitleStream>) -> MediaSnapshot {
+fn snapshot(
+    audio_streams: Vec<AudioStream>,
+    subtitle_streams: Vec<SubtitleStream>,
+) -> MediaSnapshot {
     MediaSnapshot {
         path: "/home/wilkin/Vídeos/entrada.mkv".into(),
         container: "mkv".into(),
@@ -116,7 +119,10 @@ fn audio_selection_matches_alpha2_alpha3_and_region_aliases() {
         ("eng", "en"),
     ] {
         let input = snapshot(
-            vec![audio(1, 2, Some("und"), false), audio(2, 2, Some(tag), true)],
+            vec![
+                audio(1, 2, Some("und"), false),
+                audio(2, 2, Some(tag), true),
+            ],
             Vec::new(),
         );
         let preset = preset_with_language("system-fast-compress", preferred);
@@ -154,7 +160,10 @@ fn audio_selection_falls_back_to_the_default_disposition() {
 #[test]
 fn audio_selection_falls_back_to_the_first_track() {
     let input = snapshot(
-        vec![audio(1, 2, Some("fra"), false), audio(2, 2, Some("deu"), false)],
+        vec![
+            audio(1, 2, Some("fra"), false),
+            audio(2, 2, Some("deu"), false),
+        ],
         Vec::new(),
     );
     let preset = preset_with_language("system-fast-compress", "es");

@@ -5,10 +5,10 @@
 
 use cauce_core::compat::plan_conversion;
 use cauce_core::{
-    AudioFilter, AudioStream, ConversionPlan, CustomAudio, CustomBitrate, CustomContainer, CustomPreset,
-    CustomQuality, CustomQualityLevel, CustomResolution, CustomSubtitles, CustomVideo, ErrorCode,
-    MediaSnapshot, MetadataPolicy, Preset, StreamAction, SubtitleAction, SubtitlePolicy, Timestamp,
-    VideoStream, system_presets,
+    AudioFilter, AudioStream, ConversionPlan, CustomAudio, CustomBitrate, CustomContainer,
+    CustomPreset, CustomQuality, CustomQualityLevel, CustomResolution, CustomSubtitles,
+    CustomVideo, ErrorCode, MediaSnapshot, MetadataPolicy, Preset, StreamAction, SubtitleAction,
+    SubtitlePolicy, Timestamp, VideoStream, system_presets,
 };
 
 fn probed_at() -> Timestamp {
@@ -456,14 +456,16 @@ fn hd_audio(codec: &str, channels: u8) -> AudioStream {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Downmix decision for stereo presets (phase 0, BUG-001 / T0.3).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn stereo_preset_requests_dialogue_boost_for_a_surround_source() {
-    let source = snapshot(vec![video("h264", 1920, 1080, 8)], vec![hd_audio("eac3", 6)]);
+    let source = snapshot(
+        vec![video("h264", 1920, 1080, 8)],
+        vec![hd_audio("eac3", 6)],
+    );
     let resolved = plan_conversion(&source, preset("system-fast-compress")).expect("must plan");
 
     assert_eq!(resolved.audio.action, StreamAction::Transcode);
@@ -496,7 +498,10 @@ fn stereo_preset_keeps_a_stereo_source_without_a_downmix() {
 
 #[test]
 fn surround_preset_keeps_a_surround_source_without_a_downmix() {
-    let source = snapshot(vec![video("h264", 1920, 1080, 8)], vec![hd_audio("eac3", 6)]);
+    let source = snapshot(
+        vec![video("h264", 1920, 1080, 8)],
+        vec![hd_audio("eac3", 6)],
+    );
     let resolved = plan_conversion(&source, preset("system-samsung-tv")).expect("must plan");
 
     assert_eq!(resolved.audio.channels, Some(6));
@@ -508,10 +513,12 @@ fn surround_preset_keeps_a_surround_source_without_a_downmix() {
 
 #[test]
 fn copied_audio_never_carries_a_downmix() {
-    let source = snapshot(vec![video("h264", 1920, 1080, 8)], vec![hd_audio("eac3", 6)]);
+    let source = snapshot(
+        vec![video("h264", 1920, 1080, 8)],
+        vec![hd_audio("eac3", 6)],
+    );
     let resolved = plan_conversion(&source, preset("system-archival-master")).expect("must plan");
 
     assert_eq!(resolved.audio.action, StreamAction::Copy);
     assert_eq!(resolved.audio.filter, None);
 }
-
