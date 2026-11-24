@@ -300,3 +300,54 @@ fn rejects_a_binary_that_prints_garbage() {
     );
     assert!(!error.retryable);
 }
+
+#[test]
+fn zscale_is_optional_and_not_reported_as_missing() {
+    let dir = TempDir::new("no-zscale");
+    let fake_ffmpeg = format!(
+        r#"#!/bin/sh
+case "$*" in
+  *-version*) echo '{banner}' ;;
+  *-encoders*) cat <<'TABLE'
+Encoders:
+ V..... = Video
+ A..... = Audio
+ ------
+ V....D libx264              H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10
+ V....D libx265              H.265 / HEVC
+ V....D libsvtav1            SVT-AV1 encoder
+ V....D libvpx-vp9           libvpx VP9
+ A....D aac                  AAC (Advanced Audio Coding)
+ A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3)
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+ A....D alac                 ALAC (Apple Lossless Audio Codec)
+ A....D pcm_s16le            PCM signed 16-bit little-endian
+ A....D libopus              libopus Opus
+TABLE
+  ;;
+  *-filters*) cat <<'TABLE'
+Filters:
+  T.. = Timeline support
+  .S. = Slice threading
+ .. tonemap           V->V       Convert to/from a tonemapping operator.
+ .. scale             V->V       Scale the input video size.
+ .. format            V->V       Convert the input to a pixel format.
+ .. fps               V->V       Force constant framerate.
+TABLE
+  ;;
+esac
+"#,
+        banner = BANNER.trim_end(),
+    );
+    dir.script("ffmpeg", &fake_ffmpeg);
+    dir.script("ffprobe", &fake_ffprobe());
+
+    let toolchain = locate_in(dir.as_str()).expect("both fake binaries are present and executable");
+    let capabilities = inspect(&toolchain, Path::new(dir.as_str())).expect("inspect must succeed");
+
+    assert!(
+        !capabilities.ffmpeg_missing.contains(&"zscale".to_string()),
+        "zscale is optional and must not be reported as missing: {:?}",
+        capabilities.ffmpeg_missing
+    );
+}

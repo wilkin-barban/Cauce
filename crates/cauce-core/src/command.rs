@@ -9,12 +9,12 @@
 
 use crate::error::{ErrorCode, JobError};
 use crate::plan::{
-    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
-    SubtitlePlan, VideoPlan,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
+    SubtitleAction, SubtitlePlan, VideoPlan,
 };
 
 /// Filters the MVP depends on; the capability gate (T9) checks the same names.
-pub const REQUIRED_FILTERS: [&str; 5] = ["zscale", "tonemap", "scale", "format", "fps"];
+pub const REQUIRED_FILTERS: [&str; 4] = ["tonemap", "scale", "format", "fps"];
 
 /// CPU encoders the thirteen presets select (`docs/presets.md`, "Resolución en
 /// v0.1"): the union of the video and audio allowlists below, so the capability
@@ -98,6 +98,11 @@ pub fn tonemap_filter_chain() -> &'static str {
     )
 }
 
+/// The native HDR→SDR fallback chain used when `zscale` is absent from the host.
+pub fn native_tonemap_filter_chain() -> &'static str {
+    "tonemap=mobius,format=yuv420p"
+}
+
 /// Builds the FFmpeg argument vector for `plan`.
 ///
 /// Rejects unsafe paths and anything outside the v0.1 allowlist with
@@ -122,11 +127,11 @@ pub fn build_ffmpeg_args(
     args.push("-i".into());
     args.push(input.to_string());
 
-    push_video(&mut args, &plan.video)?;
+    push_video(&mut args, &plan.video, filters)?;
     push_audio(&mut args, &plan.audio)?;
     push_subtitles(&mut args, &plan.subtitles)?;
 
-    let chain = video_filter_chain(&plan.video);
+    let chain = video_filter_chain(&plan.video, filters);
     if !chain.is_empty() {
         args.push("-vf".into());
         args.push(chain);
@@ -236,7 +241,11 @@ fn check_encoder(
     Ok(encoder.to_string())
 }
 
-fn push_video(args: &mut Vec<String>, plan: &VideoPlan) -> Result<(), JobError> {
+fn push_video(
+    args: &mut Vec<String>,
+    plan: &VideoPlan,
+    _filters: &HostFilters,
+) -> Result<(), JobError> {
     match plan.action {
         StreamAction::Remove => args.push("-vn".into()),
         StreamAction::Copy => {
@@ -380,7 +389,7 @@ fn push_subtitles(args: &mut Vec<String>, plan: &SubtitlePlan) -> Result<(), Job
 }
 
 /// Scale → fps → tone-map, comma-joined in that fixed order.
-fn video_filter_chain(plan: &VideoPlan) -> String {
+fn video_filter_chain(plan: &VideoPlan, filters: &HostFilters) -> String {
     let mut pieces: Vec<String> = Vec::new();
     if let Some(scale) = scale_filter(plan) {
         pieces.push(scale);
@@ -389,7 +398,11 @@ fn video_filter_chain(plan: &VideoPlan) -> String {
         pieces.push(format!("fps={}", format_fps(fps)));
     }
     if plan.hdr_action == HdrAction::ToneMapSdr {
-        pieces.push(tonemap_filter_chain().to_string());
+        if filters.zscale {
+            pieces.push(tonemap_filter_chain().to_string());
+        } else {
+            pieces.push(native_tonemap_filter_chain().to_string());
+        }
     }
     pieces.join(",")
 }
