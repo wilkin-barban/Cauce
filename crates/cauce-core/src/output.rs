@@ -182,15 +182,14 @@ pub fn validate_output(
         StreamAction::Transcode | StreamAction::Copy
     ) {
         let expected = expected_video_codec(plan, source);
-        let actual = output
-            .video_streams
-            .first()
-            .map(|stream| stream.codec.as_str());
-        if let (Some(expected), Some(actual)) = (expected, actual) {
-            if !same_codec(expected, actual) {
-                return Err(failed(format!(
-                    "El códec de video de la salida es `{actual}` y `{expected}` era el esperado."
-                )));
+        if let Some(expected) = expected {
+            for stream in &output.video_streams {
+                if !same_codec(expected, &stream.codec) {
+                    return Err(failed(format!(
+                        "El códec de video de la salida es `{}` y `{expected}` era el esperado.",
+                        stream.codec
+                    )));
+                }
             }
         }
     }
@@ -200,29 +199,44 @@ pub fn validate_output(
         StreamAction::Transcode | StreamAction::Copy
     ) {
         let expected = expected_audio_codec(plan, source);
-        let actual = output
-            .audio_streams
-            .first()
-            .map(|stream| stream.codec.as_str());
-        if let (Some(expected), Some(actual)) = (expected, actual) {
-            if !same_codec(expected, actual) {
-                return Err(failed(format!(
-                    "El códec de audio de la salida es `{actual}` y `{expected}` era el esperado."
-                )));
+        if let Some(expected) = expected {
+            for stream in &output.audio_streams {
+                if !same_codec(expected, &stream.codec) {
+                    return Err(failed(format!(
+                        "El códec de audio de la salida es `{}` y `{expected}` era el esperado.",
+                        stream.codec
+                    )));
+                }
             }
         }
     }
 
-    if let Some(first) = output.video_streams.first() {
+    check_track_count(
+        output.video_streams.len(),
+        expected_video_tracks(plan),
+        "video",
+    )?;
+    check_track_count(
+        output.audio_streams.len(),
+        expected_audio_tracks(plan),
+        "audio",
+    )?;
+    check_track_count(
+        output.subtitle_streams.len(),
+        expected_subtitle_tracks(plan),
+        "subtítulos",
+    )?;
+
+    for stream in &output.video_streams {
         let max_width = plan.video.max_width;
         let max_height = plan.video.max_height;
-        if max_width.is_some_and(|max| first.width > max)
-            || max_height.is_some_and(|max| first.height > max)
+        if max_width.is_some_and(|max| stream.width > max)
+            || max_height.is_some_and(|max| stream.height > max)
         {
             return Err(failed(format!(
                 "La resolución de la salida ({}×{}) supera el límite del plan ({}×{}).",
-                first.width,
-                first.height,
+                stream.width,
+                stream.height,
                 max_width.map_or("sin límite".to_owned(), |max| max.to_string()),
                 max_height.map_or("sin límite".to_owned(), |max| max.to_string()),
             )));
@@ -249,6 +263,38 @@ fn check_family(removed: bool, streams: usize, family: &str) -> Result<(), JobEr
         )));
     }
     Ok(())
+}
+
+fn check_track_count(actual: usize, expected: usize, family: &str) -> Result<(), JobError> {
+    if actual != expected {
+        return Err(failed(format!(
+            "La cantidad de pistas de {family} de la salida ({actual}) no coincide con lo declarado en el plan ({expected})."
+        )));
+    }
+    Ok(())
+}
+
+fn expected_video_tracks(plan: &ConversionPlan) -> usize {
+    if plan.video.action == StreamAction::Remove {
+        0
+    } else {
+        1
+    }
+}
+
+fn expected_audio_tracks(plan: &ConversionPlan) -> usize {
+    if plan.audio.action == StreamAction::Remove {
+        0
+    } else {
+        1
+    }
+}
+
+fn expected_subtitle_tracks(plan: &ConversionPlan) -> usize {
+    match plan.subtitles.action {
+        SubtitleAction::Remove | SubtitleAction::BurnIn => 0,
+        SubtitleAction::Copy | SubtitleAction::Transcode => 1,
+    }
 }
 
 /// Codec the temporary must carry for video: the encoder family when the plan

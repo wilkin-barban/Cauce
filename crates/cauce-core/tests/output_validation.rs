@@ -276,3 +276,53 @@ fn rejects_an_empty_output() {
         "the source is never mutated"
     );
 }
+
+#[test]
+fn validate_output_rejects_an_audio_track_count_mismatch() {
+    let mut output = valid_output();
+    output.audio_streams = vec![audio_stream(1, "aac"), audio_stream(2, "aac")];
+
+    let error = validate_output(&valid_transcode(), &source(), &output)
+        .expect_err("the plan keeps one audio track but the output has two");
+    assert_rule(&error, "audio");
+    assert_rule(&error, "cantidad de pistas");
+}
+
+#[test]
+fn validate_output_accepts_a_plan_and_output_with_one_track_each() {
+    let mut plan = valid_transcode();
+    plan.subtitles = subtitle_plan(SubtitleAction::Copy);
+
+    let mut output = valid_output();
+    output.subtitle_streams = vec![subtitle_stream(2, "mov_text")];
+
+    validate_output(&plan, &source(), &output)
+        .expect("one video track, one audio track and one subtitle track must validate");
+}
+
+#[test]
+fn validate_output_rejects_a_subtitle_track_count_mismatch() {
+    let mut plan = valid_transcode();
+    plan.subtitles = subtitle_plan(SubtitleAction::Copy);
+
+    let mut output = valid_output();
+    output.subtitle_streams = vec![
+        subtitle_stream(2, "mov_text"),
+        subtitle_stream(3, "mov_text"),
+    ];
+
+    let error = validate_output(&plan, &source(), &output)
+        .expect_err("the plan keeps one subtitle track but the output has two");
+    assert_rule(&error, "subtítulo");
+    assert_rule(&error, "cantidad de pistas");
+}
+
+#[test]
+fn validate_output_checks_the_codec_of_every_audio_track() {
+    let mut output = valid_output();
+    output.audio_streams = vec![audio_stream(1, "aac"), audio_stream(2, "opus")];
+
+    let error = validate_output(&valid_transcode(), &source(), &output)
+        .expect_err("the second audio track has an unexpected opus codec");
+    assert_rule(&error, "opus");
+}
