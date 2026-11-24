@@ -9,8 +9,8 @@
 use crate::error::{ErrorCode, JobError};
 use crate::media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
 use crate::plan::{
-    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
-    SubtitlePlan, VideoPlan,
+    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
+    SubtitleAction, SubtitlePlan, VideoPlan,
 };
 use crate::preset::{HdrPolicy, Preset, SubtitlePolicy};
 
@@ -393,16 +393,18 @@ fn select_stream<'a, T>(
     let (chosen, why) = match &preferred {
         Some(preferred) => {
             let matched = streams.iter().find(|stream| {
-                language(stream).and_then(normalized_language).as_deref() == Some(preferred.as_str())
+                language(stream).and_then(normalized_language).as_deref()
+                    == Some(preferred.as_str())
             });
             match matched {
-                Some(stream) => (stream, format!("por coincidir con el idioma preferido `{preferred}`")),
+                Some(stream) => (
+                    stream,
+                    format!("por coincidir con el idioma preferido `{preferred}`"),
+                ),
                 None => match streams.iter().find(|stream| is_default(stream)) {
                     Some(stream) => (
                         stream,
-                        format!(
-                            "por ser la pista por defecto; ninguna coincide con `{preferred}`"
-                        ),
+                        format!("por ser la pista por defecto; ninguna coincide con `{preferred}`"),
                     ),
                     None => (
                         first,
@@ -486,7 +488,11 @@ fn normalized_language(code: &str) -> Option<String> {
     let canonical = LANGUAGE_ALIASES
         .iter()
         .find(|(alias, _)| *alias == base)
-        .or_else(|| LANGUAGE_ALIASES.iter().find(|(_, canonical)| *canonical == base))
+        .or_else(|| {
+            LANGUAGE_ALIASES
+                .iter()
+                .find(|(_, canonical)| *canonical == base)
+        })
         .map(|(_, canonical)| *canonical)
         .unwrap_or(base);
     Some(canonical.to_owned())
@@ -549,23 +555,15 @@ fn plan_subtitles(
         return Ok(removed_subtitles());
     };
 
-    let target = target_subtitle_codec(&preset.container).ok_or_else(|| {
-        JobError::new(
-            ErrorCode::PlanInvalid,
-            format!(
-                "el contenedor `{}` del preset `{}` no transporta subtítulos",
-                preset.container, preset.id
-            ),
-            false,
-        )
-    })?;
+    let Some(target) = target_subtitle_codec(&preset.container) else {
+        reasoning.push(format!(
+            "subtítulos: remove — el contenedor `{}` no admite subtítulos aunque el preset `{}` los solicitaba; se descartan para no interrumpir la conversión.",
+            preset.container, preset.id
+        ));
+        return Ok(removed_subtitles());
+    };
 
-    let incompatible = snapshot
-        .subtitle_streams
-        .iter()
-        .find(|stream| !container_carries_subtitle(&preset.container, &stream.codec));
-
-    let Some(incompatible) = incompatible else {
+    if container_carries_subtitle(&preset.container, &selected.codec) {
         reasoning.push(format!(
             "subtítulos: copy — la pista seleccionada ya es compatible con `{}`.",
             preset.container
@@ -576,16 +574,22 @@ fn plan_subtitles(
             stream_index: Some(selected.index),
             source_index: None,
         });
-    };
+    }
 
-    if incompatible.kind == SubtitleKind::Bitmap {
-        return Ok(removed_bitmap_subtitles(incompatible, preset, reasoning));
+    if selected.kind == SubtitleKind::Bitmap {
+        return Ok(removed_bitmap_subtitles(selected, preset, reasoning));
     }
 
     reasoning.push(format!(
         "subtítulos: transcode — `{}` no transporta `{}`; las pistas de texto se convierten a `{target}`.",
-        preset.container, incompatible.codec
+        preset.container, selected.codec
     ));
+    if matches!(selected.codec.as_str(), "ass" | "ssa") && target == "mov_text" {
+        reasoning.push(format!(
+            "subtítulos: aviso — los estilos visuales de `{}` no se conservan al convertir a `mov_text`.",
+            selected.codec
+        ));
+    }
     Ok(SubtitlePlan {
         action: SubtitleAction::Transcode,
         encoder: Some(target.to_owned()),
@@ -601,8 +605,7 @@ fn removed_bitmap_subtitles(
     reasoning: &mut Vec<String>,
 ) -> SubtitlePlan {
     reasoning.push(format!(
-        "subtítulos: remove — la pista `{}` es bitmap y `{}` no la admite; v0.1 no tiene OCR \
-         y no degrada subtítulos en silencio.",
+        "subtítulos: remove — la pista `{}` es incompatible con el contenedor `{}`; v0.1 no tiene OCR y el quemado (burn-in) no está disponible en la Fase 0.",
         stream.codec, preset.container
     ));
     removed_subtitles()

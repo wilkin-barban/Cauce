@@ -6,7 +6,7 @@
 use cauce_core::compat::plan_conversion;
 use cauce_core::{
     AudioStream, HdrAction, MediaSnapshot, Preset, StreamAction, SubtitleAction, SubtitleKind,
-    SubtitleStream, Timestamp, VideoStream, system_presets,
+    SubtitlePolicy, SubtitleStream, Timestamp, VideoStream, system_presets,
 };
 
 fn probed_at() -> Timestamp {
@@ -277,4 +277,76 @@ fn plan_is_reproducible() {
             preset.id
         );
     }
+}
+
+#[test]
+fn a_container_without_subtitle_support_drops_them_instead_of_failing() {
+    let input = with_subtitles("subrip", SubtitleKind::Text);
+    let mut unsupported_preset = preset("system-audio-mp3").clone();
+    unsupported_preset.subtitle_policy = SubtitlePolicy::ConvertCompatible;
+
+    let plan = plan_conversion(&input, &unsupported_preset)
+        .expect("a container without subtitle support must degrade to removing them");
+
+    assert_eq!(plan.subtitles.action, SubtitleAction::Remove);
+    assert_eq!(plan.subtitles.encoder, None);
+    assert!(
+        plan.reasoning.iter().any(|line| {
+            line.contains("subtítulos: remove")
+                && line.contains("mp3")
+                && (line.contains("solicitaba") || line.contains("pedía"))
+        }),
+        "reasoning must name the container and that the preset requested subtitles: {:?}",
+        plan.reasoning
+    );
+}
+
+#[test]
+fn a_dropped_bitmap_track_names_the_container_and_the_reason() {
+    let input = with_subtitles("hdmv_pgs_subtitle", SubtitleKind::Bitmap);
+    let plan = plan_conversion(&input, preset("system-smarttv-compat")).expect("must plan");
+
+    assert_eq!(plan.subtitles.action, SubtitleAction::Remove);
+    let reasoning_line = plan
+        .reasoning
+        .iter()
+        .find(|line| line.contains("subtítulos: remove") && line.contains("hdmv_pgs_subtitle"))
+        .expect("must have a reasoning line for the dropped bitmap track");
+
+    assert!(
+        reasoning_line.contains("mp4"),
+        "names container: {reasoning_line}"
+    );
+    assert!(
+        reasoning_line.contains("hdmv_pgs_subtitle"),
+        "names codec: {reasoning_line}"
+    );
+    assert!(
+        reasoning_line.contains("OCR"),
+        "mentions OCR: {reasoning_line}"
+    );
+    assert!(
+        reasoning_line.contains("burn-in"),
+        "mentions burn-in unavailable in phase 0: {reasoning_line}"
+    );
+    assert!(
+        reasoning_line.contains("incompatible"),
+        "mentions incompatibility: {reasoning_line}"
+    );
+}
+
+#[test]
+fn ass_subtitles_converted_for_mp4_warn_about_lost_styles() {
+    let input = with_subtitles("ass", SubtitleKind::Text);
+    let plan = plan_conversion(&input, preset("system-smarttv-compat")).expect("must plan");
+
+    assert_eq!(plan.subtitles.action, SubtitleAction::Transcode);
+    assert_eq!(plan.subtitles.encoder.as_deref(), Some("mov_text"));
+    assert!(
+        plan.reasoning.iter().any(|line| {
+            line.contains("estilos") && line.contains("mov_text") && line.contains("ass")
+        }),
+        "reasoning must warn that styles are not carried into mov_text: {:?}",
+        plan.reasoning
+    );
 }
