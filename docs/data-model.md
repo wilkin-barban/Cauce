@@ -156,7 +156,11 @@ No se permite una transición sin evento.
 Al arrancar el daemon:
 
 1. Leer `schema_version`; migrar si hace falta.
-2. Buscar trabajos en `probing`, `running`, `paused` o `validating`.
+2. Buscar trabajos en `probing`, `running`, `paused`, `validating` o `cancelling`.
+   `cancelling` entra en la barrida porque cuenta como activo para el
+   planificador y `jobs.remove` lo rechaza: si el daemon muere a mitad de una
+   cancelación, sin esta regla la fila queda inmortal y la cola no vuelve a
+   arrancar nunca.
 3. Marcarlos como `interrupted` y registrar `job_events` con `reason = recovery`.
 4. Liberar las reservas de trabajos que ya no están activos.
 5. No borrar automáticamente temporales; dejarlos para inspección o limpieza manual.

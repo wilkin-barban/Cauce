@@ -63,11 +63,11 @@ dependencies = [
 
 [[package]]
 name = "cauce-cli"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "cauce-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "cauce-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cauce-core",
  "cauce-ffmpeg",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "cauce-ffmpeg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cauce-core",
  "libc",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "cauce-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-channel",
  "cauce-core",
@@ -111,11 +111,11 @@ dependencies = [
 
 [[package]]
 name = "cauce-i18n"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "cauce-jobs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cauce-core",
  "rusqlite",

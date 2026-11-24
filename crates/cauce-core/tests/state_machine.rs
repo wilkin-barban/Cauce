@@ -224,7 +224,11 @@ fn restart_leaves_other_states_alone() {
     for from in ALL {
         if matches!(
             from,
-            JobState::Probing | JobState::Running | JobState::Paused | JobState::Validating
+            JobState::Probing
+                | JobState::Running
+                | JobState::Paused
+                | JobState::Validating
+                | JobState::Cancelling
         ) {
             continue;
         }
@@ -259,4 +263,12 @@ fn assert_guard(result: Result<JobState, cauce_core::JobError>, action: &str, fr
 fn restart_interrupts_a_paused_job_too() {
     // `data-model.md` §4 includes paused; a paused process cannot outlive the daemon.
     assert_eq!(on_restart(JobState::Paused), JobState::Interrupted);
+}
+
+#[test]
+fn restart_interrupts_a_cancelling_job_too() {
+    // `data-model.md` §4 lists the active set; `cancelling` is active for
+    // `active_count` and refused by `jobs.remove`, so a crash during
+    // cancellation has to leave it recoverable, never eternal.
+    assert_eq!(on_restart(JobState::Cancelling), JobState::Interrupted);
 }

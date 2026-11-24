@@ -354,3 +354,37 @@ fn active_count_counts_running_paused_and_cancelling() {
         "probing, running, paused, validating and cancelling hold a slot"
     );
 }
+
+#[test]
+fn marks_a_cancelling_job_interrupted_on_restart() {
+    // A daemon that dies mid-cancellation used to leave the row in `cancelling`
+    // forever: the sweep skipped it, `active_count` counted it and `jobs.remove`
+    // refused it, so the queue never started another job again.
+    let (_temp, mut store) = open("cancelling-restart");
+    let cancelling = job(JobState::Cancelling, 1);
+    store.insert_job(&cancelling).expect("insert");
+
+    let swept = store.mark_active_as_interrupted().expect("restart sweep");
+
+    assert_eq!(
+        swept, 1,
+        "a cancellation in flight must not survive a restart"
+    );
+    assert_eq!(state_of(&store, &cancelling.id), JobState::Interrupted);
+}
+
+#[test]
+fn a_stuck_cancelling_job_stops_blocking_the_queue_after_restart() {
+    let (_temp, mut store) = open("cancelling-active");
+    let cancelling = job(JobState::Cancelling, 1);
+    store.insert_job(&cancelling).expect("insert");
+    assert_eq!(store.active_count().expect("count"), 1);
+
+    store.mark_active_as_interrupted().expect("restart sweep");
+
+    assert_eq!(
+        store.active_count().expect("count"),
+        0,
+        "an interrupted row must not keep counting as active"
+    );
+}

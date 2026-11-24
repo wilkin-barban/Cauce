@@ -101,7 +101,7 @@ pub const SELECT_JOB: &str = "SELECT id, input_path, output_path, temp_path, pre
 /// States that a daemon restart must convert into `interrupted`
 /// (`docs/data-model.md` §4). Ordered so the recovery events are deterministic.
 pub const SELECT_ACTIVE_JOBS: &str = "SELECT id, state FROM jobs \
-     WHERE state IN ('probing', 'running', 'paused', 'validating') \
+     WHERE state IN ('probing', 'running', 'paused', 'validating', 'cancelling') \
      ORDER BY created_at ASC, id ASC";
 
 pub const UPDATE_JOB_STATE: &str = "UPDATE jobs SET state = ?2, updated_at = ?3 WHERE id = ?1";

@@ -124,7 +124,7 @@ Combinaciones rechazadas con `INVALID_INPUT` (no reintentable), todas probadas: 
 | `probing` | `running`, `failed`, `cancelling` |
 | `running` | `paused`, `validating`, `cancelling`, `failed`, `interrupted` |
 | `paused` | `running`, `cancelling` |
-| `cancelling` | `cancelled`, `failed` |
+| `cancelling` | `cancelled`, `failed`, `interrupted` |
 | `validating` | `completed`, `failed`, `interrupted` |
 | `completed` | terminal |
 | `cancelled` | terminal |

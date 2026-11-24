@@ -61,6 +61,11 @@
   <url type="vcs-browser">https://github.com/wilkin-barban/Cauce</url>
 
   <releases>
+    <release version="0.1.1" date="2026-11-24">
+      <description>
+        <p>Estabilización: downmix estéreo con realce de diálogos, tone mapping sin zscale y limpieza de temporales.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-14">
       <description>
         <p>Primera versión: cola persistente, presets del sistema y GUI nativa.</p>

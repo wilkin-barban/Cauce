@@ -134,9 +134,14 @@ pub fn on_restart(state: JobState) -> JobState {
         // `contracts.md` §4 lists probing/running/validating; `data-model.md` §4 also
         // lists paused, and a paused job's process dies with the daemon, so pausing
         // cannot survive a restart. The recovery path (T11) already interrupts it.
-        JobState::Probing | JobState::Running | JobState::Paused | JobState::Validating => {
-            JobState::Interrupted
-        }
+        // `cancelling` belongs here too: it counts as active for the scheduler
+        // and `jobs.remove` refuses it, so a crash mid-cancellation would leave a
+        // row that blocks the queue forever.
+        JobState::Probing
+        | JobState::Running
+        | JobState::Paused
+        | JobState::Validating
+        | JobState::Cancelling => JobState::Interrupted,
         other => other,
     }
 }
