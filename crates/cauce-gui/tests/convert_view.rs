@@ -576,7 +576,8 @@ fn the_selection_header_summary_and_row_removal_are_visible() {
             let removed = Rc::clone(&removed);
             Rc::new(move |path: String| removed.borrow_mut().push(path))
         };
-        let refresh = view::refresh(&ui, &state, &presets, &handler);
+        let options: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &options, &handler);
         refresh();
         assert!(
             !ui.selection_box.is_visible(),
@@ -691,11 +692,12 @@ fn the_rows_of_the_page_escape_what_the_user_brings() {
 
     let ran = on_gtk_thread(|| {
         let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let options: Rc<dyn Fn(String)> = Rc::new(|_| {});
         // La fila aceptada: el nombre real y el hostil.
         for name in MARKUP_NAMES {
             let path = format!("/tmp/entrada/{name}");
             let snapshot = sized_snapshot(&path, 1024);
-            let row = view::file_row(&snapshot, &remove);
+            let row = view::file_row(&snapshot, &options, &remove);
             let title = row.title();
             let subtitle = row.subtitle().unwrap_or_default();
             assert_eq!(
@@ -738,7 +740,7 @@ fn the_rows_of_the_page_escape_what_the_user_brings() {
         state.set_output_dir(Some(folder.to_owned()));
         let state = Rc::new(RefCell::new(state));
         let presets = Rc::new(RefCell::new(Vec::new()));
-        let refresh = view::refresh(&ui, &state, &presets, &remove);
+        let refresh = view::refresh(&ui, &state, &presets, &options, &remove);
         refresh();
         assert_eq!(
             rendered(ui.output_row.subtitle().unwrap_or_default().as_ref()),
@@ -754,12 +756,7 @@ fn the_rows_of_the_page_escape_what_the_user_brings() {
 #[test]
 fn the_audio_dropdown_lists_every_track() {
     let ran = on_gtk_thread(|| {
-        let ui = Ui::build();
-        let state = Rc::new(RefCell::new(ConvertState::new()));
-        let presets = Rc::new(RefCell::new(Vec::new()));
-        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
-        let refresh = view::refresh(&ui, &state, &presets, &remove);
-
+        let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let mut snap = sized_snapshot("/tmp/multi_audio.mkv", 1024);
         snap.audio_streams = vec![
             cauce_core::AudioStream {
@@ -791,17 +788,23 @@ fn the_audio_dropdown_lists_every_track() {
             },
         ];
 
-        state.borrow_mut().accept_probe(snap);
-        refresh();
+        let sel = cauce_gui::selection::FileSelection::from_probe(&snap, None);
+        let dialog = cauce_gui::pages::convert::track_dialog::present(&dummy, &snap, &sel, |_| {});
 
-        let model = ui
-            .audio_dropdown
+        let mut found_combo = None;
+        walk(dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-audio" {
+                found_combo = w.downcast_ref::<adw::ComboRow>().cloned();
+            }
+        });
+        let combo = found_combo.expect("el diálogo debe tener un combo de audio");
+        let model = combo
             .model()
-            .expect("el dropdown de audio debe tener un modelo");
+            .expect("el combo de audio debe tener un modelo");
         assert_eq!(
             model.n_items(),
             3,
-            "el dropdown debe listar las tres pistas de audio"
+            "el combo debe listar las tres pistas de audio"
         );
     });
     if !ran {
@@ -867,11 +870,7 @@ fn the_audio_label_names_language_codec_and_channels() {
 #[test]
 fn the_voice_switch_maps_to_the_mix_mode() {
     let ran = on_gtk_thread(|| {
-        let client = Rc::new(cauce_gui::client::Client::connect());
-        let ui = Ui::build();
-        let state = Rc::new(RefCell::new(ConvertState::new()));
-        cauce_gui::pages::convert::flows::wire(&client, &ui, &state);
-
+        let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let mut snap = sized_snapshot("/tmp/voice.mkv", 1024);
         snap.audio_streams = vec![cauce_core::AudioStream {
             index: 1,
@@ -882,34 +881,36 @@ fn the_voice_switch_maps_to_the_mix_mode() {
             language: Some("spa".to_owned()),
             is_default: true,
         }];
-        state.borrow_mut().accept_probe(snap);
 
-        // Disparamos la actualización del estado en la UI
-        ui.voice_switch.set_active(true);
-        {
-            let s = state.borrow();
-            let sel = s
-                .current_selection()
-                .expect("debe haber una selección activa");
-            assert_eq!(
-                sel.selection.audio_mix_mode,
-                cauce_core::AudioMixMode::StereoDialogueBoost,
-                "el switch activo mapea a StereoDialogueBoost"
-            );
-        }
+        let sel = cauce_gui::selection::FileSelection::from_probe(&snap, None);
+        let recorded = Rc::new(RefCell::new(sel.clone()));
+        let recorded_for_change = Rc::clone(&recorded);
+        let dialog =
+            cauce_gui::pages::convert::track_dialog::present(&dummy, &snap, &sel, move |s| {
+                *recorded_for_change.borrow_mut() = s
+            });
 
-        ui.voice_switch.set_active(false);
-        {
-            let s = state.borrow();
-            let sel = s
-                .current_selection()
-                .expect("debe haber una selección activa");
-            assert_eq!(
-                sel.selection.audio_mix_mode,
-                cauce_core::AudioMixMode::Passthrough,
-                "el switch inactivo mapea a Passthrough"
-            );
-        }
+        let mut found_switch = None;
+        walk(dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-voice-switch" {
+                found_switch = w.downcast_ref::<gtk::Switch>().cloned();
+            }
+        });
+        let switch = found_switch.expect("debe existir el switch de voz");
+
+        switch.set_active(true);
+        assert_eq!(
+            recorded.borrow().selection.audio_mix_mode,
+            cauce_core::AudioMixMode::StereoDialogueBoost,
+            "el switch activo mapea a StereoDialogueBoost"
+        );
+
+        switch.set_active(false);
+        assert_eq!(
+            recorded.borrow().selection.audio_mix_mode,
+            cauce_core::AudioMixMode::Passthrough,
+            "el switch inactivo mapea a Passthrough"
+        );
 
         // Caso mono (< 2 canales): el switch se deshabilita con razón visible
         let mut mono_snap = sized_snapshot("/tmp/mono.mkv", 1024);
@@ -922,19 +923,27 @@ fn the_voice_switch_maps_to_the_mix_mode() {
             language: Some("spa".to_owned()),
             is_default: true,
         }];
-        state.borrow_mut().clear_all();
-        state.borrow_mut().accept_probe(mono_snap);
+        let mono_sel = cauce_gui::selection::FileSelection::from_probe(&mono_snap, None);
+        let mono_dialog =
+            cauce_gui::pages::convert::track_dialog::present(&dummy, &mono_snap, &mono_sel, |_| {});
 
-        let presets = Rc::new(RefCell::new(Vec::new()));
-        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
-        let refresh = view::refresh(&ui, &state, &presets, &remove);
-        refresh();
-
+        let mut mono_switch = None;
+        let mut mono_row = None;
+        walk(mono_dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-voice-switch" {
+                mono_switch = w.downcast_ref::<gtk::Switch>().cloned();
+            }
+            if w.widget_name() == "track-dialog-voice-row" {
+                mono_row = w.downcast_ref::<adw::ActionRow>().cloned();
+            }
+        });
+        let switch = mono_switch.expect("debe existir el switch de voz mono");
         assert!(
-            !ui.voice_switch.is_sensitive(),
+            !switch.is_sensitive(),
             "el switch de voz debe deshabilitarse cuando la pista tiene menos de 2 canales"
         );
-        let subtitle = ui.voice_switch.subtitle().unwrap_or_default();
+        let row = mono_row.expect("debe existir la fila de voz mono");
+        let subtitle = row.subtitle().unwrap_or_default();
         assert!(
             !subtitle.is_empty(),
             "debe haber un motivo visible explicando por qué está deshabilitado"
@@ -948,33 +957,22 @@ fn the_voice_switch_maps_to_the_mix_mode() {
 #[test]
 fn subtitle_controls_are_disabled_without_tracks() {
     let ran = on_gtk_thread(|| {
-        let ui = Ui::build();
-        let state = Rc::new(RefCell::new(ConvertState::new()));
-        let presets = Rc::new(RefCell::new(Vec::new()));
-        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
-        let refresh = view::refresh(&ui, &state, &presets, &remove);
-
+        let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let mut snap = sized_snapshot("/tmp/no_subs.mkv", 1024);
         snap.subtitle_streams = vec![];
-        state.borrow_mut().accept_probe(snap);
-        refresh();
+        let sel = cauce_gui::selection::FileSelection::from_probe(&snap, None);
+        let dialog = cauce_gui::pages::convert::track_dialog::present(&dummy, &snap, &sel, |_| {});
 
+        let mut found_combo = None;
+        walk(dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-subtitles" {
+                found_combo = w.downcast_ref::<adw::ComboRow>().cloned();
+            }
+        });
+        let combo = found_combo.expect("debe existir el combo de subtítulos");
         assert!(
-            !ui.subtitle_dropdown.is_sensitive(),
+            !combo.is_sensitive(),
             "el desplegable de subtítulos debe estar deshabilitado sin pistas"
-        );
-        assert!(
-            !ui.subtitle_soft_radio.is_sensitive(),
-            "el radio soft debe estar deshabilitado sin pistas"
-        );
-        assert!(
-            !ui.subtitle_burn_radio.is_sensitive(),
-            "el radio burn-in debe estar deshabilitado sin pistas"
-        );
-        let reason = ui.subtitle_row.subtitle().unwrap_or_default();
-        assert!(
-            !reason.is_empty(),
-            "debe explicarse visiblemente por qué están deshabilitados los controles de subtítulo"
         );
     });
     if !ran {
@@ -985,12 +983,7 @@ fn subtitle_controls_are_disabled_without_tracks() {
 #[test]
 fn burn_in_stays_available_for_a_bitmap_track() {
     let ran = on_gtk_thread(|| {
-        let ui = Ui::build();
-        let state = Rc::new(RefCell::new(ConvertState::new()));
-        let presets = Rc::new(RefCell::new(Vec::new()));
-        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
-        let refresh = view::refresh(&ui, &state, &presets, &remove);
-
+        let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let mut snap = sized_snapshot("/tmp/bitmap_sub.mkv", 1024);
         snap.subtitle_streams = vec![cauce_core::SubtitleStream {
             index: 3,
@@ -1000,12 +993,25 @@ fn burn_in_stays_available_for_a_bitmap_track() {
             is_default: true,
             is_forced: false,
         }];
-        state.borrow_mut().accept_probe(snap);
-        refresh();
+        let sel = cauce_gui::selection::FileSelection::from_probe(&snap, None);
+        let dialog = cauce_gui::pages::convert::track_dialog::present(&dummy, &snap, &sel, |_| {});
 
+        let mut found_combo = None;
+        walk(dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-subtitles" {
+                found_combo = w.downcast_ref::<adw::ComboRow>().cloned();
+            }
+        });
+        let combo = found_combo.expect("debe existir el combo de subtítulos");
         assert!(
-            ui.subtitle_burn_radio.is_sensitive(),
-            "burn-in debe permanecer disponible para una pista de subtítulo en mapa de bits"
+            combo.is_sensitive(),
+            "el combo de subtítulos debe permanecer disponible para una pista en mapa de bits"
+        );
+        let model = combo.model().expect("el combo debe tener modelo");
+        assert_eq!(
+            model.n_items(),
+            2,
+            "el modelo debe incluir 'Sin subtítulos' y la pista bitmap"
         );
     });
     if !ran {
@@ -1073,4 +1079,325 @@ fn the_summary_names_language_mode_and_subtitles() {
         summary2.contains("sin subtítulos") || summary2.contains("without subtitles"),
         "el resumen debe nombrar la omisión de subtítulos: {summary2}"
     );
+}
+
+#[test]
+fn the_page_has_no_global_track_block() {
+    let ran = on_gtk_thread(|| {
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let options: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &options, &remove);
+
+        let snap = sized_snapshot("/tmp/sample.mkv", 1024);
+        state.borrow_mut().accept_probe(snap);
+        refresh();
+
+        let mut found_tracks_group = false;
+        let root = ui.page.upcast_ref::<gtk::Widget>();
+        walk(root, &mut |w| {
+            if w.widget_name() == "tracks-group" {
+                found_tracks_group = true;
+            }
+        });
+        assert!(
+            !found_tracks_group,
+            "la página no debe contener un bloque global de pistas (tracks-group)"
+        );
+    });
+    if !ran {
+        skip("the_page_has_no_global_track_block");
+    }
+}
+
+#[test]
+fn every_row_has_an_options_button() {
+    let ran = on_gtk_thread(|| {
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let options: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &options, &remove);
+
+        state
+            .borrow_mut()
+            .accept_probe(sized_snapshot("/tmp/a.mkv", 1024));
+        state
+            .borrow_mut()
+            .accept_probe(sized_snapshot("/tmp/b.mkv", 1024));
+        refresh();
+
+        let mut option_buttons = 0;
+        walk(ui.files_list.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "file-options" {
+                option_buttons += 1;
+            }
+        });
+        assert_eq!(
+            option_buttons, 2,
+            "cada fila debe tener un botón file-options"
+        );
+    });
+    if !ran {
+        skip("every_row_has_an_options_button");
+    }
+}
+
+#[test]
+fn the_options_button_carries_its_own_path() {
+    let ran = on_gtk_thread(|| {
+        let clicked = Rc::new(RefCell::new(Vec::new()));
+        let options: Rc<dyn Fn(String)> = {
+            let clicked = Rc::clone(&clicked);
+            Rc::new(move |p| clicked.borrow_mut().push(p))
+        };
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+
+        // File 1 with multiple audio so options button is enabled
+        let mut snap1 = sized_snapshot("/tmp/one.mkv", 1024);
+        snap1.audio_streams = vec![
+            cauce_core::AudioStream {
+                index: 1,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(128_000),
+                language: Some("spa".to_owned()),
+                is_default: true,
+            },
+            cauce_core::AudioStream {
+                index: 2,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(128_000),
+                language: Some("eng".to_owned()),
+                is_default: false,
+            },
+        ];
+        let row1 = view::file_row(&snap1, &options, &remove);
+
+        let mut snap2 = sized_snapshot("/tmp/two.mkv", 1024);
+        snap2.audio_streams = snap1.audio_streams.clone();
+        let row2 = view::file_row(&snap2, &options, &remove);
+
+        // Find file-options buttons
+        let mut btn1 = None;
+        walk(row1.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "file-options" {
+                btn1 = w.downcast_ref::<gtk::Button>().cloned();
+            }
+        });
+        let mut btn2 = None;
+        walk(row2.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "file-options" {
+                btn2 = w.downcast_ref::<gtk::Button>().cloned();
+            }
+        });
+
+        let b1 = btn1.expect("fila 1 debe tener botón file-options");
+        let b2 = btn2.expect("fila 2 debe tener botón file-options");
+
+        b1.emit_clicked();
+        b2.emit_clicked();
+
+        assert_eq!(*clicked.borrow(), vec!["/tmp/one.mkv", "/tmp/two.mkv"]);
+    });
+    if !ran {
+        skip("the_options_button_carries_its_own_path");
+    }
+}
+
+#[test]
+fn the_dialog_offers_no_subtitles_first() {
+    let ran = on_gtk_thread(|| {
+        let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let mut snap = sized_snapshot("/tmp/subs.mkv", 1024);
+        snap.subtitle_streams = vec![cauce_core::SubtitleStream {
+            index: 2,
+            codec: "subrip".to_owned(),
+            language: Some("spa".to_owned()),
+            kind: cauce_core::SubtitleKind::Text,
+            is_default: true,
+            is_forced: false,
+        }];
+        let sel = cauce_gui::selection::FileSelection::from_probe(&snap, None);
+        let dialog = cauce_gui::pages::convert::track_dialog::present(&dummy, &snap, &sel, |_| {});
+
+        let mut found_combo = None;
+        walk(dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-subtitles" {
+                found_combo = w.downcast_ref::<adw::ComboRow>().cloned();
+            }
+        });
+        let combo = found_combo.expect("debe existir el combo de subtítulos");
+        let model = combo.model().expect("debe haber un modelo");
+        assert!(model.n_items() >= 2, "debe haber al menos 2 opciones");
+        let first_item = model
+            .item(0)
+            .and_then(|obj| obj.downcast::<gtk::StringObject>().ok())
+            .map(|s| s.string().to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            first_item,
+            t("convert.track_none"),
+            "la primera opción debe ser 'Sin subtítulos'"
+        );
+    });
+    if !ran {
+        skip("the_dialog_offers_no_subtitles_first");
+    }
+}
+
+#[test]
+fn opening_the_dialog_for_one_file_leaves_the_other_alone() {
+    let ran = on_gtk_thread(|| {
+        let client = Rc::new(cauce_gui::client::Client::connect());
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        cauce_gui::pages::convert::flows::wire(&client, &ui, &state);
+
+        let mut snap1 = sized_snapshot("/tmp/file1.mkv", 1024);
+        snap1.audio_streams = vec![
+            cauce_core::AudioStream {
+                index: 1,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(128_000),
+                language: Some("spa".to_owned()),
+                is_default: true,
+            },
+            cauce_core::AudioStream {
+                index: 2,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(128_000),
+                language: Some("eng".to_owned()),
+                is_default: false,
+            },
+        ];
+        let mut snap2 = sized_snapshot("/tmp/file2.mkv", 1024);
+        snap2.audio_streams = vec![
+            cauce_core::AudioStream {
+                index: 10,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(128_000),
+                language: Some("fra".to_owned()),
+                is_default: true,
+            },
+            cauce_core::AudioStream {
+                index: 11,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(128_000),
+                language: Some("deu".to_owned()),
+                is_default: false,
+            },
+        ];
+
+        state.borrow_mut().accept_probe(snap1.clone());
+        state.borrow_mut().accept_probe(snap2.clone());
+
+        let sel1_before = state
+            .borrow()
+            .selection_for("/tmp/file1.mkv")
+            .cloned()
+            .unwrap();
+        let sel2_before = state
+            .borrow()
+            .selection_for("/tmp/file2.mkv")
+            .cloned()
+            .unwrap();
+
+        // Present dialog for file 1 with callback mutating file 1
+        let dummy = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let dialog =
+            cauce_gui::pages::convert::track_dialog::present(&dummy, &snap1, &sel1_before, {
+                let state = Rc::clone(&state);
+                move |updated| {
+                    if let Some(s) = state.borrow_mut().selection_for_mut("/tmp/file1.mkv") {
+                        *s = updated;
+                    }
+                }
+            });
+
+        // Change audio in dialog for file 1 to index 1 (track 2, "eng")
+        let mut found_combo = None;
+        walk(dialog.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "track-dialog-audio" {
+                found_combo = w.downcast_ref::<adw::ComboRow>().cloned();
+            }
+        });
+        let combo = found_combo.expect("combo de audio en diálogo");
+        combo.set_selected(1);
+
+        // Check state
+        let s = state.borrow();
+        let sel1_after = s.selection_for("/tmp/file1.mkv").unwrap();
+        let sel2_after = s.selection_for("/tmp/file2.mkv").unwrap();
+
+        assert_eq!(
+            sel1_after.selection.audio_track_indices,
+            vec![2],
+            "el archivo 1 debe haber cambiado a la pista 2"
+        );
+        assert_eq!(
+            sel2_after, &sel2_before,
+            "el archivo 2 debe permanecer intacto"
+        );
+    });
+    if !ran {
+        skip("opening_the_dialog_for_one_file_leaves_the_other_alone");
+    }
+}
+
+#[test]
+fn options_button_is_disabled_without_alternative_tracks() {
+    let ran = on_gtk_thread(|| {
+        let options: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+
+        let mut snap = sized_snapshot("/tmp/single_audio.mkv", 1024);
+        snap.audio_streams = vec![cauce_core::AudioStream {
+            index: 1,
+            codec: "aac".to_owned(),
+            channels: 2,
+            sample_rate: 48000,
+            bitrate_bps: Some(128_000),
+            language: Some("spa".to_owned()),
+            is_default: true,
+        }];
+        snap.subtitle_streams = vec![];
+
+        let row = view::file_row(&snap, &options, &remove);
+
+        let mut opt_button = None;
+        walk(row.upcast_ref::<gtk::Widget>(), &mut |w| {
+            if w.widget_name() == "file-options" {
+                opt_button = w.downcast_ref::<gtk::Button>().cloned();
+            }
+        });
+        let button = opt_button.expect("debe existir el botón file-options");
+        assert!(
+            !button.is_sensitive(),
+            "el botón de opciones debe estar deshabilitado con una sola pista de audio y sin subtítulos"
+        );
+        let tooltip = button.tooltip_text().unwrap_or_default();
+        assert_eq!(
+            tooltip,
+            t("convert.track_unavailable"),
+            "el tooltip debe explicar por qué está deshabilitado"
+        );
+    });
+    if !ran {
+        skip("options_button_is_disabled_without_alternative_tracks");
+    }
 }
