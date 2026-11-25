@@ -22,7 +22,12 @@ struct TempDir {
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("cauce-t9-{tag}-{}", std::process::id()));
+        // Two tests sharing a tag would delete each other's fakes mid-run; the
+        // counter makes every directory unique even when that happens.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("cauce-t9-{tag}-{}-{unique}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("the test temp dir must be creatable");
         Self { path }
