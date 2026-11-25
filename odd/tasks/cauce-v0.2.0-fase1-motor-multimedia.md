@@ -379,3 +379,20 @@ Causa: `start()` en `orchestrator/tick.rs` **recalculaba el plan** con `plan_con
 Arreglo: `plan_for_execution(persisted, probe, preset)` usa el plan congelado y solo recalcula cuando la fila no tiene ninguno. Dos tests unitarios lo fijan, incluido el contraste contra `plan_conversion` para probar que el plan legacy **no** puede producir el correcto.
 Lección: siete tareas con 429 pruebas verdes y el motor no convertía ni un archivo real. El end-to-end no es ceremonia; es la única prueba que ejerce el cableado entre piezas que individualmente funcionan.
 **Hallazgo de infraestructura:** `crates/cauce-ffmpeg/tests/toolchain.rs` era intermitente (1 de cada 3 corridas) porque dos tests compartían el mismo directorio temporal y se borraban los binarios falsos entre sí. Se agregó un contador atómico al nombre del directorio; 5 corridas consecutivas verdes. Un test intermitente en la puerta de calidad es una puerta que no cierra.
+
+**L20** — **La conversión real destapó un segundo defecto, y este era de rendimiento puro.**
+Diagnóstico del Tech Lead, verificado en `crates/cauce-core/src/compat.rs`: la rama de transcodificación de video asignaba `fps: preset.max_fps` **incondicionalmente**. `system-smarttv-compat` declara `max_fps: 60.0`, así que una película de 23.976 fps recibía `fps=60` en la cadena de filtros: FFmpeg **interpola** frames en vez de limitar, y el trabajo cayó a 9 fps con el 600 % de CPU, proyectando ~17 horas.
+Arreglo: `fps: preset.max_fps.filter(|cap| stream.fps > *cap)`. Un tope solo aplica cuando la fuente lo supera; por debajo no se emite filtro alguno. Dos tests lo fijan (23.976 sin filtro, 120 reducido a 60).
+Es el mismo error conceptual que ya habíamos evitado con la resolución (`min(iw,W)`, nunca upscale) y que se nos escapó con el framerate. Una lección repetida no es una lección aprendida hasta que el código la impone.
+Trabajo `01a2109f` cancelado por IPC (`jobs.cancel`): el estado pasó a `cancelled` y el `ffmpeg` residual se terminó.
+
+**L21** — **`G2` medida sobre el benchmark real** (evidencia provista por el Tech Lead con `ebur128` y `volumedetect` sobre la mezcla de diálogo y el AC-3 5.1 de *The End of Oak Street*):
+
+| Métrica | Valor medido | Puerta |
+|---|---|---|
+| Loudness integrado (I) | **−22.2 LUFS** | `G2` pide −24 a −18 LUFS → **pasa** |
+| Loudness range (LRA) | 21.8 LU | — |
+| Volumen medio | −22.1 dB | coherente con el integrado |
+| Volumen máximo | **0.0 dB** | ⚠️ ver nota |
+
+**Nota honesta sobre el pico:** `volumedetect` informando `max_volume: 0.0 dB` significa pico a fondo de escala, y con `alimiter=limit=0.98` el máximo esperado es ≈ −0.17 dB. Una de dos: o la medición se hizo sobre la mezcla antes del limitador, o el limitador no está actuando como se cree. Queda como verificación pendiente para 0.2.1 y **no** se declara "sin clipping" hasta medirlo sobre la salida de Cauce con el limitador aplicado. El integrado −22.2 LUFS sí es concluyente para `G2`.

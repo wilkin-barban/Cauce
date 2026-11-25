@@ -182,7 +182,10 @@ fn plan_video(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<Str
                 quality: preset.video_quality,
                 max_width: preset.max_width,
                 max_height: preset.max_height,
-                fps: preset.max_fps,
+                // A cap only applies when the source exceeds it: emitting
+                // `fps=60` for a 23.976 film makes FFmpeg interpolate frames
+                // instead of limiting anything (found by the OAK benchmark).
+                fps: preset.max_fps.filter(|cap| stream.fps > *cap),
                 pixel_format: preset.pixel_format.clone(),
                 profile: preset.profile.clone(),
                 level: preset.level,

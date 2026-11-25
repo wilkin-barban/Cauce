@@ -522,3 +522,38 @@ fn copied_audio_never_carries_a_downmix() {
     assert_eq!(resolved.audio.action, StreamAction::Copy);
     assert_eq!(resolved.audio.filter, None);
 }
+
+// ---------------------------------------------------------------------------
+// `max_fps` is a cap, never a target (found by the OAK-street benchmark)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_source_below_the_frame_rate_cap_gets_no_fps_filter() {
+    // The source is 25 fps and the preset caps at 60. Emitting `fps=60` here is
+    // not a cap: FFmpeg interpolates, and a 4K film that should re-encode in
+    // minutes takes hours.
+    let input = snapshot(vec![video("hevc", 1920, 1080, 8)], vec![audio("aac", 2)]);
+
+    let plan = plan_conversion(&input, preset("system-smarttv-compat")).expect("must plan");
+
+    assert_eq!(plan.video.action, StreamAction::Transcode, "hevc to h264");
+    assert_eq!(
+        plan.video.fps, None,
+        "25 fps is already below the 60 fps cap, so there is nothing to limit"
+    );
+}
+
+#[test]
+fn a_source_above_the_frame_rate_cap_gets_the_cap_applied() {
+    let mut fast = video("hevc", 1920, 1080, 8);
+    fast.fps = 120.0;
+    let input = snapshot(vec![fast], vec![audio("aac", 2)]);
+
+    let plan = plan_conversion(&input, preset("system-smarttv-compat")).expect("must plan");
+
+    assert_eq!(
+        plan.video.fps,
+        Some(60.0),
+        "120 fps does exceed the cap and must be reduced to it"
+    );
+}
