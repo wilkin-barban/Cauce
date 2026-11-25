@@ -56,6 +56,30 @@ Representa el resultado de `ffprobe` para un archivo:
 
 `SubtitlePlan`: `action` (`copy`/`transcode`/`remove`/`burn_in`), `encoder?`, `stream_index?`, `source_index?`.
 
+#### Selección de pistas y opciones personalizadas (v0.2)
+
+Ambos son **opcionales** en `media.plan` y `jobs.add`: si el campo entero falta, el daemon aplica las reglas del preset, que es el comportamiento de v0.1 ([`architecture-phases-0-and-1.md`](architecture-phases-0-and-1.md) §3.5).
+
+`TrackSelection`: `audio_track_indices` (u32[]), `subtitle_track_index?`, `subtitle_mode`, `audio_mix_mode`.
+
+| Regla | Detalle |
+|---|---|
+| Orden | `audio_track_indices` es orden de inclusión en la salida, no orden de pista de origen |
+| Lista vacía | Solo legal con `audio_mix_mode: passthrough`; con cualquier otro modo es un downmix sin fuente |
+| Duplicados | Prohibidos: dos entradas iguales producirían dos `-map` de la misma pista |
+| Tope | Cuatro pistas; el modo dual emite dos y el benchmark necesita una |
+
+`subtitle_mode`: `soft_embed`, `burn_in`, `strip`. `audio_mix_mode`: `passthrough`, `stereo_dialogue_boost`, `dual_track_universal`. No existe `external_file` ni un booleano `dual_track_audio`: el enum es la única fuente de verdad (decisión registrada en [`odd/tasks/cauce-v0.2.0-fase1-motor-multimedia.md`](../odd/tasks/cauce-v0.2.0-fase1-motor-multimedia.md) L3).
+
+`CustomConversionOptions`: `resolution`, `crf?`, `video_bitrate_kbps?`, `video_codec?`, `audio_codec?`, `audio_bitrate_kbps?`, `tone_mapping`. Todos los campos tienen valor por defecto, así que `{"resolution": "1080p", "crf": 20}` es un payload válido.
+
+| Campo | Valores | Regla |
+|---|---|---|
+| `resolution` | `"original"`, `"1080p"` o la forma etiquetada `{"fixed": {"width", "height"}}` / `{"max_height"}` | El atajo `"<alto>p"` es azúcar de `max_height`; una dimensión `0` se rechaza |
+| `crf` | entero `0-51` | Fuera de rango es error de contrato, no un valor a recortar |
+| `video_bitrate_kbps` / `audio_bitrate_kbps` | entero `> 0` | `0` es un bitrate imposible |
+| `tone_mapping` | `hable`, `mobius`, `reinhard` | Elige la curva; **si** se mapea sigue siendo decisión de `HdrAction` |
+
 ### 2.3 `Preset`
 
 Un preset contiene identidad, presentación, restricciones y preferencias. El catálogo canónico está en [`presets.md`](presets.md).

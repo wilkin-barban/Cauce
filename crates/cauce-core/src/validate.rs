@@ -46,3 +46,29 @@ where
         )))
     }
 }
+
+pub(crate) fn optional_positive_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<u32>::deserialize(deserializer)?;
+    match value {
+        Some(0) => Err(de::Error::custom("a bitrate must be greater than zero")),
+        other => Ok(other),
+    }
+}
+
+pub(crate) fn crf<'de, D>(deserializer: D) -> Result<Option<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<u8>::deserialize(deserializer)?;
+    match value {
+        Some(crf) if !crate::preset::CRF_RANGE.contains(&crf) => Err(de::Error::custom(format!(
+            "crf must be within {}..={}, got {crf}",
+            crate::preset::CRF_RANGE.start(),
+            crate::preset::CRF_RANGE.end()
+        ))),
+        other => Ok(other),
+    }
+}
