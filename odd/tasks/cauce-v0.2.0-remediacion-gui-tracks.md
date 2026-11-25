@@ -161,3 +161,7 @@ No se reintenta. El candidato queda sin recibo nativo. El arreglo sigue en manos
 - Paridad i18n: **10 claves** `convert.track_*` en cada uno de los tres catálogos.
 - `cargo test --workspace`: **70 binarios, 438 pruebas, 0 fallos**; `clippy -D warnings` 0 warnings; `fmt` limpio; `window-ready` bajo Xvfb.
 El worker se detuvo una vez para preguntar dónde vivía el módulo `convert` en vez de inventar `mod.rs`. Esa parada evitó un `E0761`; la corrección fue mía, que había autorizado una superficie inexistente.
+
+**L6** — T7 ejecutada. El primer empaquetado falló en `check-package.sh` con `tar: ./usr/bin/cauce-gui: Wrote only 9216 of 10240 bytes`, y `dpkg-deb -I` con `Função write falhou: Cota da disco excedida`.
+**El paquete no estaba corrupto: el tmpfs de `/tmp` no tenía cuota para la extracción.** Con `TMPDIR=/var/tmp` el mismo archivo pasa el gate sin cambios. Hallazgo real de la puerta: `check-package.sh` extrae en `${TMPDIR:-/tmp}` y, si la extracción falla por espacio, reporta "paquete inválido" en vez de "no pude extraer". Una puerta que confunde un problema de entorno con un defecto del artefacto miente en la dirección más caras: hace dudar del binario correcto. Queda propuesto como mejora del script, no aplicado acá para no meter código fuera de alcance en una release ya verificada.
+Resultado final: `check-package: OK`, `dpkg -i` → `0.2.0-1`, `daemon_version: 0.2.0` por socket real, `window-ready` bajo Xvfb, daemon superviviente. SHA-256 `6900ea0dc61745fb1507918702eaff2aff8296b28b4df02a2c3039eb1311849c`.

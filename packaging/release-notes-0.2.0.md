@@ -5,6 +5,7 @@ selección explícita de pistas, doble audio con realce de diálogo, subtítulos
 incrustados y control de calidad, de la GUI a FFmpeg.
 
 **Artefacto:** `cauce_0.2.0-1_amd64.deb`
+**SHA-256:** `6900ea0dc61745fb1507918702eaff2aff8296b28b4df02a2c3039eb1311849c`
 
 ## Qué cambia para quien usa Cauce
 
