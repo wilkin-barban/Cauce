@@ -10,7 +10,7 @@ use crate::error::{ErrorCode, JobError};
 use crate::media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
 use crate::plan::{
     AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
-    SubtitleAction, SubtitlePlan, VideoPlan,
+    SubtitleAction, SubtitleMode, SubtitlePlan, SubtitleTrackPlan, VideoPlan,
 };
 use crate::preset::{HdrPolicy, Preset, SubtitlePolicy};
 
@@ -601,6 +601,133 @@ fn plan_subtitles(
         stream_index: None,
         source_index: Some(selected.index),
     })
+}
+
+/// Resolves the subtitle tracks of a plan from an explicit mode and selection
+/// (`docs/architecture-phases-0-and-1.md` §3.3).
+///
+/// Every branch either produces a track or leaves a reasoning line that says
+/// why there is none. The preset keeps the last word: a preset whose policy is
+/// `remove` ships no subtitles even when the user selected one.
+pub fn resolve_subtitles(
+    preset: &Preset,
+    selected: Option<&SubtitleStream>,
+    mode: SubtitleMode,
+    reasoning: &mut Vec<String>,
+) -> Result<Vec<SubtitleTrackPlan>, JobError> {
+    // Burning in against a preset with no video is a contradiction, not a
+    // preference: it fails even when the preset would otherwise drop subtitles.
+    if mode == SubtitleMode::BurnIn && preset.video_codec == "none" {
+        return Err(JobError::new(
+            ErrorCode::PlanInvalid,
+            format!(
+                "el preset `{}` no tiene pista de video donde incrustar subtítulos; \
+                 elegí un preset con video o quitá el modo incrustar.",
+                preset.id
+            ),
+            false,
+        ));
+    }
+    if preset.subtitle_policy == SubtitlePolicy::Remove {
+        reasoning.push(format!(
+            "subtítulos: remove — el preset `{}` no transporta subtítulos (`subtitle_policy: remove`).",
+            preset.id
+        ));
+        return Ok(Vec::new());
+    }
+    if mode == SubtitleMode::Strip {
+        reasoning.push("subtítulos: strip — el usuario pidió no incluir subtítulos.".to_owned());
+        return Ok(Vec::new());
+    }
+    let Some(stream) = selected else {
+        reasoning.push("subtítulos: remove — no se seleccionó ninguna pista.".to_owned());
+        return Ok(Vec::new());
+    };
+
+    if mode == SubtitleMode::BurnIn {
+        if preset.video_codec == "none" {
+            return Err(JobError::new(
+                ErrorCode::PlanInvalid,
+                format!(
+                    "el preset `{}` no tiene pista de video donde incrustar subtítulos;                      elegí un preset con video o quitá el modo incrustar.",
+                    preset.id
+                ),
+                false,
+            ));
+        }
+        let mechanism = match stream.kind {
+            SubtitleKind::Text => "subtitles",
+            SubtitleKind::Bitmap => "overlay",
+        };
+        reasoning.push(format!(
+            "subtítulos: burn-in — la pista `{}` ({}) se incrusta en los fotogramas con `{mechanism}`.",
+            stream.codec,
+            match stream.kind {
+                SubtitleKind::Text => "texto",
+                SubtitleKind::Bitmap => "bitmap",
+            }
+        ));
+        return Ok(vec![SubtitleTrackPlan {
+            source_index: stream.index,
+            output_index: None,
+            action: SubtitleAction::BurnIn,
+            encoder: Some(mechanism.to_owned()),
+            language: stream.language.clone(),
+            title: None,
+            is_default: false,
+        }]);
+    }
+
+    if container_carries_subtitle(&preset.container, &stream.codec) {
+        reasoning.push(format!(
+            "subtítulos: copy — la pista `{}` ya es compatible con `{}`.",
+            stream.codec, preset.container
+        ));
+        return Ok(vec![soft_track(stream, SubtitleAction::Copy, None)]);
+    }
+
+    if stream.kind == SubtitleKind::Bitmap {
+        reasoning.push(format!(
+            "subtítulos: remove — la pista `{}` es bitmap y `{}` no la admite como subtítulo suave; \
+             la única salida es incrustarla con el modo burn-in.",
+            stream.codec, preset.container
+        ));
+        return Ok(Vec::new());
+    }
+
+    let Some(target) = target_subtitle_codec(&preset.container) else {
+        reasoning.push(format!(
+            "subtítulos: remove — el contenedor `{}` no admite subtítulos.",
+            preset.container
+        ));
+        return Ok(Vec::new());
+    };
+
+    reasoning.push(format!(
+        "subtítulos: transcode — `{}` no transporta `{}`; la pista se convierte a `{target}`.",
+        preset.container, stream.codec
+    ));
+    Ok(vec![soft_track(
+        stream,
+        SubtitleAction::Transcode,
+        Some(target),
+    )])
+}
+
+fn soft_track(
+    stream: &SubtitleStream,
+    action: SubtitleAction,
+    encoder: Option<&str>,
+) -> SubtitleTrackPlan {
+    SubtitleTrackPlan {
+        source_index: stream.index,
+        output_index: Some(0),
+        action,
+        encoder: encoder.map(str::to_owned),
+        language: stream.language.clone(),
+        title: None,
+        is_default: true,
+    }
 }
 
 /// v0.1 has no OCR: a bitmap track that needs to become text is dropped, not degraded.

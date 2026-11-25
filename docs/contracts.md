@@ -60,8 +60,9 @@ Representa el resultado de `ffprobe` para un archivo:
 
 `SubtitlePlan`: `action` (`copy`/`transcode`/`remove`/`burn_in`), `encoder?`, `stream_index?`, `source_index?`.
 
-`AudioTrackPlan`: `source_index`, `output_index`, `action`, `encoder?`, `bitrate?`, `channels`, `filter?`, `language?`, `title?`, `is_default`. `SubtitleTrackPlan`: igual pero `output_index?` (
-`null` para una pista incrustada) y `action` con los valores de `SubtitlePlan`.
+`AudioTrackPlan`: `source_index`, `output_index`, `action`, `encoder?`, `bitrate?`, `channels`, `filter?`, `language?`, `title?`, `is_default`. `SubtitleTrackPlan`: igual pero `output_index?` (`null` para una pista incrustada) y `action` con los valores de `SubtitlePlan`.
+
+En una pista `burn_in`, `encoder` nombra el mecanismo, no un codificador: `subtitles` para una pista de texto y `overlay` para un mapa de bits (PGS, VobSub). Ninguna de las dos produce un stream en la salida.
 
 Un plan que no declara pistas se lee con `primary_audio()` / `primary_subtitles()`, que derivan la vista de un solo stream a partir de los campos `audio` y `subtitles`. Esa vista es la que mantiene funcionando los planes persistidos por 0.1.x sin migración de datos.
 
