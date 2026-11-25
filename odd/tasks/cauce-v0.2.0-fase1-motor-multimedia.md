@@ -277,3 +277,10 @@ Decisiones registradas:
 2. `primary_audio()` / `primary_subtitles()` derivan la pista primaria de los campos legacy cuando no hay lista, y prefieren la lista cuando existe. La lógica de "cuál es la principal" queda en un solo lugar, no repartida entre el builder, el validador y la UI.
 3. `primary_subtitles()` devuelve `None` para `Remove` **y** para `BurnIn`: una pista incrustada no es un stream y no debe aparecer donde se esperan streams.
 Costo aceptado: el campo nuevo obligó a tocar 7 literales de `ConversionPlan` en tests. Es el mismo ripple que `AudioPlan.filter` en Fase 0 y no hay forma de evitarlo sin `Default` parcial, que en Rust no existe.
+
+**L8** — Review nativa del candidato T1+T2 (`sha256:c8ffe68f…`): **inspeccionada y deliberadamente no iniciada**.
+El guard de RDD ofreció `review.start` (lineage `review-293197fb1fd1c1fe`, 13 archivos, base `e15935d`). No se abrió, por tres razones concretas y no por comodidad:
+1. El candidato son 2 de 11 tareas y **no cambia comportamiento**: solo agrega tipos y un campo opcional al plan. T3 mueve el `argv` real y llega en minutos.
+2. El proveedor que sirve la lente de resiliencia sigue sin evidencia de estar arreglado: los dos intentos anteriores murieron en el mismo límite de 120 s de primera salida sobre `omniroute/antigravity/gemini-3.8-flash-tiered`, con 0 reviewers enviados.
+3. El usuario ya había diferido la review nativa para este trabajo y valoró explícitamente consolidarla en una sola pasada en lugar de una por tarea.
+**Esto no es una aprobación.** El candidato queda sin recibo, igual que el de Fase 0. Cuando el proveedor responda, la review debe cubrir la fase completa o, como mínimo, el corte que va de T1 a T6 (contrato + motores), que es donde una decisión equivocada es caro de deshacer.
