@@ -115,7 +115,7 @@ sudo apt install ffmpeg
 Descargá la última versión desde la sección de [Releases](https://github.com/wilkin-barban/Cauce/releases):
 
 ```bash
-sudo dpkg -i cauce_0.1.1_amd64.deb
+sudo dpkg -i cauce_0.2.0_amd64.deb
 ```
 
 Habilitá e iniciá el servicio del daemon en tu sesión de usuario:

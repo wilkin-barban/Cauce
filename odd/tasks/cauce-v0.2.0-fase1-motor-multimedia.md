@@ -396,3 +396,12 @@ Trabajo `01a2109f` cancelado por IPC (`jobs.cancel`): el estado pasó a `cancell
 | Volumen máximo | **0.0 dB** | ⚠️ ver nota |
 
 **Nota honesta sobre el pico:** `volumedetect` informando `max_volume: 0.0 dB` significa pico a fondo de escala, y con `alimiter=limit=0.98` el máximo esperado es ≈ −0.17 dB. Una de dos: o la medición se hizo sobre la mezcla antes del limitador, o el limitador no está actuando como se cree. Queda como verificación pendiente para 0.2.1 y **no** se declara "sin clipping" hasta medirlo sobre la salida de Cauce con el limitador aplicado. El integrado −22.2 LUFS sí es concluyente para `G2`.
+
+**L22** — T11 cerrada y release v0.2.0 preparada y verificada en el host.
+- Versión `0.2.0` en `Cargo.toml`/`Cargo.lock`, metainfo AppStream, README, `CHANGELOG.md` y notas en `packaging/release-notes-0.2.0.md`.
+- Puertas: `fmt` limpio, `clippy -D warnings` 0 warnings, **70 binarios / 431 pruebas / 0 fallos**.
+- Paquete: `cargo deb -p cauce-daemon --no-build -o dist/` → `cauce_0.2.0-1_amd64.deb` (2 008 180 B), `check-package.sh` → OK, SHA-256 `fd73367f…437f6`.
+- Host: `apt-get install --reinstall` → `0.2.0-1` sobre `0.1.1-1`; `system.capabilities` sobre el socket real devuelve `daemon_version: 0.2.0`; FFmpeg 8.0.1 sin capacidades faltantes; `CAUCE_SMOKE=1 xvfb-run cauce-gui` → `window-ready`, el daemon sobrevive; `cauce-cli --help` muestra el subcomando real.
+- **`G2` cerrada** con −22.2 LUFS integrados sobre el archivo real (dentro de −24 a −18), con la salvedad del pico declarada en L21.
+**Lo que NO queda verificado y no se declara como tal:** la conversión completa de los 22.6 GB no se repitió de punta a punta después del arreglo de `max_fps`. El plan es correcto, la ejecución arrancó y el defecto que la hizo inviable está corregido con test, pero la corrida íntegra queda pendiente como verificación de 0.2.1.
+**Sin recibo de review nativa:** la lineage `review-1831bbbccdf1e1c3` sigue abierta y sin enviar; el proveedor falló tres veces con el mismo límite. La aprobación es humana y está registrada como tal en L14.
