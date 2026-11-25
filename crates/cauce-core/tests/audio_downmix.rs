@@ -16,7 +16,7 @@ const TEMP: &str = "/home/wilkin/Vídeos/.cauce-job-1.part.mp4";
 
 /// The matrix of `docs/architecture-phases-0-and-1.md` §2 BUG-001, verbatim.
 const DIALOGUE_BOOST: &str =
-    "pan=stereo|FL=0.5*FL+0.85*FC+0.5*SL|FR=0.5*FR+0.85*FC+0.5*SR,volume=1.8";
+    "pan=stereo|FL=0.5*FL+0.85*FC+0.5*SL|FR=0.5*FR+0.85*FC+0.5*SR,volume=1.8,alimiter=limit=0.98";
 
 #[rustfmt::skip]
 fn video_plan() -> VideoPlan {

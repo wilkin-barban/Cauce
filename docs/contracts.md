@@ -54,7 +54,7 @@ Representa el resultado de `ffprobe` para un archivo:
 
 `AudioPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `bitrate?`, `channels?`, `stream_index?`, `normalize?`, `filter?`.
 
-`filter?` es un enumerado cerrado, nunca texto libre: `stereo_dialogue_boost` pide la matriz de downmix con realce del canal central que corrige el «audio mudo» de v0.1 ([`architecture-phases-0-and-1.md`](architecture-phases-0-and-1.md) §2 BUG-001). Se omite del JSON cuando no hay filtro, así que un plan persistido por v0.1 se sigue leyendo byte a byte igual.
+`filter?` es un enumerado cerrado, nunca texto libre: `stereo_dialogue_boost` pide la matriz de downmix con realce del canal central que corrige el «audio mudo» de v0.1 ([`architecture-phases-0-and-1.md`](architecture-phases-0-and-1.md) §2 BUG-001), más el limitador `alimiter=limit=0.98` que evita el clipping de fase 1 (§3.2). Se omite del JSON cuando no hay filtro, así que un plan persistido por v0.1 se sigue leyendo byte a byte igual.
 
 `SubtitlePlan`: `action` (`copy`/`transcode`/`remove`/`burn_in`), `encoder?`, `stream_index?`, `source_index?`.
 

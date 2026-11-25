@@ -9,8 +9,8 @@
 
 use crate::error::{ErrorCode, JobError};
 use crate::plan::{
-    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
-    SubtitleAction, SubtitlePlan, VideoPlan,
+    AudioFilter, AudioPlan, AudioTrackPlan, ConversionPlan, HdrAction, MetadataPolicy,
+    StreamAction, SubtitleAction, SubtitlePlan, ToneMappingOption, VideoPlan,
 };
 
 /// Filters the MVP depends on; the capability gate (T9) checks the same names.
@@ -19,12 +19,13 @@ pub const REQUIRED_FILTERS: [&str; 4] = ["tonemap", "scale", "format", "fps"];
 /// CPU encoders the thirteen presets select (`docs/presets.md`, "Resolución en
 /// v0.1"): the union of the video and audio allowlists below, so the capability
 /// gate checks exactly what the builder is able to emit.
-pub const REQUIRED_ENCODERS: [&str; 10] = [
+pub const REQUIRED_ENCODERS: [&str; 11] = [
     "libx264",
     "libx265",
     "libsvtav1",
     "libvpx-vp9",
     "aac",
+    "ac3",
     "libmp3lame",
     "flac",
     "alac",
@@ -35,7 +36,15 @@ pub const REQUIRED_ENCODERS: [&str; 10] = [
 /// CPU video encoders allowed in v0.1. `copy` is not a re-encode.
 const VIDEO_ENCODERS: [&str; 4] = ["libx264", "libx265", "libsvtav1", "libvpx-vp9"];
 /// CPU audio encoders allowed in v0.1.
-const AUDIO_ENCODERS: [&str; 6] = ["aac", "libmp3lame", "flac", "alac", "pcm_s16le", "libopus"];
+const AUDIO_ENCODERS: [&str; 7] = [
+    "aac",
+    "ac3",
+    "libmp3lame",
+    "flac",
+    "alac",
+    "pcm_s16le",
+    "libopus",
+];
 /// Subtitle encoders allowed in v0.1.
 const SUBTITLE_ENCODERS: [&str; 3] = ["srt", "mov_text", "webvtt"];
 
@@ -52,9 +61,13 @@ const BASE_ARGS: [&str; 8] = [
 
 /// The matrix that folds a >= 6 channel source into stereo while lifting the
 /// front centre, where film dialogue lives (`docs/architecture-phases-0-and-1.md`
-/// §2 BUG-001). `volume=1.8` compensates the headroom of a cinema mix.
+/// §2 BUG-001). `volume=1.8` compensates the headroom of a cinema mix and
+/// `alimiter=limit=0.98` keeps an explosion from clipping on the way out (§3.2).
+///
+/// `alimiter` ships with every libavfilter build, so it needs no capability gate
+/// of its own the way `zscale` does.
 pub const DIALOGUE_BOOST_FILTER: &str =
-    "pan=stereo|FL=0.5*FL+0.85*FC+0.5*SL|FR=0.5*FR+0.85*FC+0.5*SR,volume=1.8";
+    "pan=stereo|FL=0.5*FL+0.85*FC+0.5*SL|FR=0.5*FR+0.85*FC+0.5*SR,volume=1.8,alimiter=limit=0.98";
 
 /// Single-pass EBU R128 target that `normalize` maps to. One pass keeps the
 /// conversion a single FFmpeg run; the two-pass variant needs a measurement
@@ -192,6 +205,58 @@ pub fn audio_filter_chain(plan: &AudioPlan) -> Option<String> {
         pieces.push(LOUDNORM_FILTER);
     }
     (!pieces.is_empty()).then(|| pieces.join(","))
+}
+
+/// The two tracks of [`crate::plan::AudioMixMode::DualTrackUniversal`] (§3.2).
+///
+/// Track 0 is the boosted stereo the user hears by default; track 1 is a plain
+/// 5.1 AC-3 re-encode for home cinema, with no filter because it keeps the
+/// source layout. Titles are left empty: they are presentation and belong to the
+/// planner, which knows the locale.
+pub fn dual_track_plans(source_index: u32, language: Option<&str>) -> Vec<AudioTrackPlan> {
+    let language = language.map(str::to_owned);
+    vec![
+        AudioTrackPlan {
+            source_index,
+            output_index: 0,
+            action: StreamAction::Transcode,
+            encoder: Some("aac".to_owned()),
+            bitrate: Some("192k".to_owned()),
+            channels: 2,
+            filter: Some(AudioFilter::StereoDialogueBoost),
+            language: language.clone(),
+            title: None,
+            is_default: true,
+        },
+        AudioTrackPlan {
+            source_index,
+            output_index: 1,
+            action: StreamAction::Transcode,
+            encoder: Some("ac3".to_owned()),
+            bitrate: Some("448k".to_owned()),
+            channels: 6,
+            filter: None,
+            language,
+            title: None,
+            is_default: false,
+        },
+    ]
+}
+
+/// The HDR→SDR chain for `algorithm` on a host that can run `zscale` or not.
+///
+/// With `zscale` the linearisation round trip is kept and only the curve changes;
+/// without it the native `tonemap` filter does the whole job, which is the
+/// fallback phase 0 stabilized for `mobius` and now extends to every algorithm.
+pub fn tonemap_chain(algorithm: ToneMappingOption, host: &HostFilters) -> String {
+    if !host.zscale {
+        return format!("tonemap={},format=yuv420p", algorithm.ffmpeg_name());
+    }
+    format!(
+        "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,\
+         tonemap=tonemap={}:desat=0,zscale=t=bt709:m=bt709:r=tv",
+        algorithm.ffmpeg_name()
+    )
 }
 
 fn check_path(path: &str, role: &str) -> Result<(), JobError> {

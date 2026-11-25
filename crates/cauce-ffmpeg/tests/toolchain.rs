@@ -73,6 +73,7 @@ Encoders:
  A....D alac                 ALAC (Apple Lossless Audio Codec)
  A....D pcm_s16le            PCM signed 16-bit little-endian
  A....D libopus              libopus Opus
+ A....D ac3                 ATSC A/52A (AC-3)
 TABLE
   ;;
   *-filters*) cat <<'TABLE'
@@ -323,6 +324,7 @@ Encoders:
  A....D alac                 ALAC (Apple Lossless Audio Codec)
  A....D pcm_s16le            PCM signed 16-bit little-endian
  A....D libopus              libopus Opus
+ A....D ac3                 ATSC A/52A (AC-3)
 TABLE
   ;;
   *-filters*) cat <<'TABLE'
