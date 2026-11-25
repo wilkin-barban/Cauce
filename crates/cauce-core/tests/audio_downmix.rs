@@ -24,6 +24,7 @@ fn video_plan() -> VideoPlan {
         action: StreamAction::Copy, encoder: None, quality: None, max_width: None,
         max_height: None, fps: None, pixel_format: None, profile: None, level: None,
         hdr_action: HdrAction::Preserve, stream_index: Some(0),
+        tone_mapping: None,
     }
 }
 

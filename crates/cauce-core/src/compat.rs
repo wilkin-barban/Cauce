@@ -136,6 +136,7 @@ fn plan_video(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<Str
                 encoder: None,
                 stream_index: Some(stream.index),
                 hdr_action,
+                tone_mapping: None,
                 ..removed_video()
             }
         }
@@ -167,6 +168,7 @@ fn plan_video(snapshot: &MediaSnapshot, preset: &Preset, reasoning: &mut Vec<Str
                 level: preset.level,
                 hdr_action,
                 stream_index: Some(stream.index),
+                tone_mapping: None,
             }
         }
     }
@@ -186,6 +188,7 @@ fn removed_video() -> VideoPlan {
         level: None,
         hdr_action: HdrAction::Preserve,
         stream_index: None,
+        tone_mapping: None,
     }
 }
 

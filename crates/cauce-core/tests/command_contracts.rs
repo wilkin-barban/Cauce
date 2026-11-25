@@ -7,7 +7,7 @@
 use cauce_core::command::{HostFilters, REQUIRED_FILTERS, build_ffmpeg_args, tonemap_filter_chain};
 use cauce_core::{
     AudioPlan, ConversionPlan, ErrorCode, HdrAction, MetadataPolicy, StreamAction, SubtitleAction,
-    SubtitlePlan, VideoPlan,
+    SubtitlePlan, ToneMappingOption, VideoPlan,
 };
 
 const INPUT: &str = "/home/wilkin/Vídeos/entrada.mp4";
@@ -19,7 +19,7 @@ fn video(action: StreamAction, encoder: Option<&str>, index: Option<u32>) -> Vid
         action, encoder: encoder.map(Into::into), quality: Some(23),
         max_width: None, max_height: None, fps: None, pixel_format: None,
         profile: None, level: None, hdr_action: HdrAction::Preserve,
-        stream_index: index,
+        stream_index: index, tone_mapping: None,
     }
 }
 
@@ -287,7 +287,16 @@ fn tonemap_uses_zscale_when_capabilities_report_it() {
 }
 
 #[test]
-fn tonemap_falls_back_to_native_mobius_without_zscale() {
+fn tonemap_falls_back_to_the_native_filter_without_zscale() {
+    // Phase 1 made the curve part of the plan, so the native path carries
+    // whatever the plan asks for. A plan written by 0.1.x names no curve and
+    // keeps the hable default; asking for mobius explicitly still works, which
+    // is the fallback phase 0 stabilized.
+    let filters = HostFilters {
+        zscale: false,
+        loudnorm: true,
+    };
+
     let mut hdr_video = video(StreamAction::Transcode, Some("libx264"), Some(0));
     hdr_video.hdr_action = HdrAction::ToneMapSdr;
     let conversion = plan(
@@ -295,14 +304,22 @@ fn tonemap_falls_back_to_native_mobius_without_zscale() {
         audio(StreamAction::Remove, None, None),
         subs(SubtitleAction::Remove, None, None),
     );
-    let filters = HostFilters {
-        zscale: false,
-        loudnorm: true,
-    };
     let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &filters).expect("plan must build");
     let chain = arg_of(&argv, "-vf").expect("-vf must be present");
-    assert!(chain.contains("tonemap=mobius"), "{argv:?}");
+    assert_eq!(chain, "tonemap=hable,format=yuv420p", "{argv:?}");
     assert!(!chain.contains("zscale"), "{argv:?}");
+
+    let mut mobius_video = video(StreamAction::Transcode, Some("libx264"), Some(0));
+    mobius_video.hdr_action = HdrAction::ToneMapSdr;
+    mobius_video.tone_mapping = Some(ToneMappingOption::Mobius);
+    let conversion = plan(
+        mobius_video,
+        audio(StreamAction::Remove, None, None),
+        subs(SubtitleAction::Remove, None, None),
+    );
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &filters).expect("plan must build");
+    let chain = arg_of(&argv, "-vf").expect("-vf must be present");
+    assert_eq!(chain, "tonemap=mobius,format=yuv420p", "{argv:?}");
 }
 
 #[test]

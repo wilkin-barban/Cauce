@@ -60,6 +60,7 @@ fn conversion_plan_round_trips_and_keeps_reasoning() {
             level: Some(41),
             hdr_action: HdrAction::ToneMapSdr,
             stream_index: Some(0),
+            tone_mapping: None,
         },
         audio: AudioPlan {
             action: StreamAction::Transcode,

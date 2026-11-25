@@ -130,6 +130,7 @@ fn plan() -> ConversionPlan {
             level: None,
             hdr_action: HdrAction::Preserve,
             stream_index: Some(0),
+            tone_mapping: None,
         },
         audio: AudioPlan {
             action: StreamAction::Copy,

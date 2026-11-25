@@ -57,6 +57,7 @@ fn video_plan(encoder: &str) -> VideoPlan {
         level: None,
         hdr_action: HdrAction::Preserve,
         stream_index: Some(0),
+        tone_mapping: None,
     }
 }
 
@@ -151,6 +152,7 @@ fn required_encoders_match_the_builder_allowlists() {
                 &plan(
                     VideoPlan {
                         action: StreamAction::Remove,
+                        tone_mapping: None,
                         ..video_plan("libx264")
                     },
                     audio_plan(encoder),

@@ -92,6 +92,11 @@ pub struct VideoPlan {
     pub level: Option<i32>,
     pub hdr_action: HdrAction,
     pub stream_index: Option<u32>,
+    /// Curve used when `hdr_action` maps HDR. `None` keeps the phase 0 chain
+    /// (`hable`), and the field is skipped when absent so a plan written by
+    /// 0.1.x still serializes byte for byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone_mapping: Option<ToneMappingOption>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

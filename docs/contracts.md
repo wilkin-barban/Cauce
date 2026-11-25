@@ -50,7 +50,9 @@ Representa el resultado de `ffprobe` para un archivo:
 | `audio_tracks` | `AudioTrackPlan[]` | Opcional. Vacío en un plan escrito por 0.1.x; se omite del JSON cuando está vacío |
 | `subtitle_tracks` | `SubtitleTrackPlan[]` | Opcional. Una pista incrustada vive aquí sin `output_index` |
 
-`VideoPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `quality?`, `max_width?`, `max_height?`, `fps?`, `pixel_format?`, `profile?`, `level?`, `hdr_action` (`preserve`/`tone_map_sdr`), `stream_index?`.
+`VideoPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `quality?`, `max_width?`, `max_height?`, `fps?`, `pixel_format?`, `profile?`, `level?`, `hdr_action` (`preserve`/`tone_map_sdr`), `stream_index?`, `tone_mapping?`.
+
+`tone_mapping?` elige la curva (`hable`/`mobius`/`reinhard`) cuando `hdr_action` mapea. Ausente significa `hable`, y se omite del JSON cuando falta, así que un plan de 0.1.x serializa igual que antes.
 
 `AudioPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `bitrate?`, `channels?`, `stream_index?`, `normalize?`, `filter?`.
 

@@ -10,7 +10,7 @@
 use crate::error::{ErrorCode, JobError};
 use crate::plan::{
     AudioFilter, AudioPlan, AudioTrackPlan, ConversionPlan, HdrAction, MetadataPolicy,
-    StreamAction, SubtitleAction, SubtitlePlan, ToneMappingOption, VideoPlan,
+    StreamAction, SubtitleAction, SubtitlePlan, SubtitleTrackPlan, ToneMappingOption, VideoPlan,
 };
 
 /// Filters the MVP depends on; the capability gate (T9) checks the same names.
@@ -141,10 +141,10 @@ pub fn build_ffmpeg_args(
     args.push(input.to_string());
 
     push_video(&mut args, &plan.video, filters)?;
-    push_audio(&mut args, &plan.audio)?;
-    push_subtitles(&mut args, &plan.subtitles)?;
+    push_audio(&mut args, &plan.audio, &plan.audio_tracks)?;
+    push_subtitles(&mut args, &plan.subtitles, &plan.subtitle_tracks)?;
 
-    let chain = video_filter_chain(&plan.video, filters);
+    let chain = video_filter_chain(plan, input, filters)?;
     if !chain.is_empty() {
         args.push("-vf".into());
         args.push(chain);
@@ -198,13 +198,21 @@ fn check_audio_filters(plan: &ConversionPlan, filters: &HostFilters) -> Result<(
 /// all, which is what every plan written before phase 0 expects.
 pub fn audio_filter_chain(plan: &AudioPlan) -> Option<String> {
     let mut pieces: Vec<&'static str> = Vec::new();
-    if plan.filter == Some(AudioFilter::StereoDialogueBoost) {
-        pieces.push(DIALOGUE_BOOST_FILTER);
+    if let Some(filter) = plan.filter {
+        pieces.push(filter_text(filter));
     }
     if plan.normalize {
         pieces.push(LOUDNORM_FILTER);
     }
     (!pieces.is_empty()).then(|| pieces.join(","))
+}
+
+/// The FFmpeg text of a closed [`AudioFilter`]. One place, so the allowlist can
+/// never drift between the single-track and the multi-track path.
+fn filter_text(filter: AudioFilter) -> &'static str {
+    match filter {
+        AudioFilter::StereoDialogueBoost => DIALOGUE_BOOST_FILTER,
+    }
 }
 
 /// The two tracks of [`crate::plan::AudioMixMode::DualTrackUniversal`] (§3.2).
@@ -407,7 +415,14 @@ fn annex_a_level(level_idc: i32) -> Result<&'static str, JobError> {
     Ok(level)
 }
 
-fn push_audio(args: &mut Vec<String>, plan: &AudioPlan) -> Result<(), JobError> {
+fn push_audio(
+    args: &mut Vec<String>,
+    plan: &AudioPlan,
+    tracks: &[AudioTrackPlan],
+) -> Result<(), JobError> {
+    if !tracks.is_empty() {
+        return push_audio_tracks(args, tracks);
+    }
     match plan.action {
         StreamAction::Remove => args.push("-an".into()),
         StreamAction::Copy => {
@@ -432,7 +447,14 @@ fn push_audio(args: &mut Vec<String>, plan: &AudioPlan) -> Result<(), JobError> 
     Ok(())
 }
 
-fn push_subtitles(args: &mut Vec<String>, plan: &SubtitlePlan) -> Result<(), JobError> {
+fn push_subtitles(
+    args: &mut Vec<String>,
+    plan: &SubtitlePlan,
+    tracks: &[SubtitleTrackPlan],
+) -> Result<(), JobError> {
+    if !tracks.is_empty() {
+        return push_subtitle_tracks(args, tracks);
+    }
     match plan.action {
         SubtitleAction::Remove => args.push("-sn".into()),
         SubtitleAction::Copy => {
@@ -453,23 +475,165 @@ fn push_subtitles(args: &mut Vec<String>, plan: &SubtitlePlan) -> Result<(), Job
     Ok(())
 }
 
-/// Scale → fps → tone-map, comma-joined in that fixed order.
-fn video_filter_chain(plan: &VideoPlan, filters: &HostFilters) -> String {
+/// Indexed audio emission for a plan that names its tracks (§3.4).
+///
+/// The disposition is always explicit: without it FFmpeg lets the companion
+/// inherit `default` from the source and a player may pick the 5.1 track.
+fn push_audio_tracks(args: &mut Vec<String>, tracks: &[AudioTrackPlan]) -> Result<(), JobError> {
+    for track in tracks {
+        let index = track.output_index;
+        args.extend(["-map".to_string(), format!("0:{}", track.source_index)]);
+        match track.action {
+            StreamAction::Remove => {
+                return Err(invalid(
+                    "an audio track list may not carry a removed track; drop it from the list",
+                ));
+            }
+            StreamAction::Copy => args.extend([format!("-c:a:{index}"), "copy".to_string()]),
+            StreamAction::Transcode => {
+                let encoder = check_encoder(track.encoder.as_deref(), &AUDIO_ENCODERS, "audio")?;
+                args.extend([format!("-c:a:{index}"), encoder]);
+                if let Some(bitrate) = &track.bitrate {
+                    args.extend([format!("-b:a:{index}"), bitrate.clone()]);
+                }
+                args.extend([format!("-ac:{index}"), track.channels.to_string()]);
+                if let Some(filter) = track.filter {
+                    args.extend([
+                        format!("-filter:a:{index}"),
+                        filter_text(filter).to_string(),
+                    ]);
+                }
+            }
+        }
+        push_track_metadata(
+            args,
+            "a",
+            index,
+            track.language.as_deref(),
+            track.title.as_deref(),
+        );
+        push_disposition(args, "a", index, track.is_default);
+    }
+    Ok(())
+}
+
+/// Indexed subtitle emission (§3.4). A burned-in track never reaches here: it is
+/// pixels, so the video chain carries it instead.
+fn push_subtitle_tracks(
+    args: &mut Vec<String>,
+    tracks: &[SubtitleTrackPlan],
+) -> Result<(), JobError> {
+    for track in tracks {
+        if track.action == SubtitleAction::BurnIn {
+            continue;
+        }
+        let index = track.output_index.ok_or_else(|| {
+            invalid("a soft subtitle track must declare the output index it occupies")
+        })?;
+        args.extend(["-map".to_string(), format!("0:{}", track.source_index)]);
+        match track.action {
+            SubtitleAction::Remove | SubtitleAction::BurnIn => {}
+            SubtitleAction::Copy => args.extend([format!("-c:s:{index}"), "copy".to_string()]),
+            SubtitleAction::Transcode => {
+                let encoder =
+                    check_encoder(track.encoder.as_deref(), &SUBTITLE_ENCODERS, "subtitle")?;
+                args.extend([format!("-c:s:{index}"), encoder]);
+            }
+        }
+        push_track_metadata(
+            args,
+            "s",
+            index,
+            track.language.as_deref(),
+            track.title.as_deref(),
+        );
+        push_disposition(args, "s", index, track.is_default);
+    }
+    Ok(())
+}
+
+fn push_track_metadata(
+    args: &mut Vec<String>,
+    family: &str,
+    index: u32,
+    language: Option<&str>,
+    title: Option<&str>,
+) {
+    if let Some(language) = language {
+        args.extend([
+            format!("-metadata:s:{family}:{index}"),
+            format!("language={language}"),
+        ]);
+    }
+    if let Some(title) = title {
+        args.extend([
+            format!("-metadata:s:{family}:{index}"),
+            format!("title={title}"),
+        ]);
+    }
+}
+
+fn push_disposition(args: &mut Vec<String>, family: &str, index: u32, is_default: bool) {
+    let value = if is_default { "default" } else { "0" };
+    args.extend([format!("-disposition:{family}:{index}"), value.to_string()]);
+}
+
+/// Scale → fps → tone-map → burn-in, comma-joined in that fixed order.
+fn video_filter_chain(
+    plan: &ConversionPlan,
+    input: &str,
+    filters: &HostFilters,
+) -> Result<String, JobError> {
     let mut pieces: Vec<String> = Vec::new();
-    if let Some(scale) = scale_filter(plan) {
+    if let Some(scale) = scale_filter(&plan.video) {
         pieces.push(scale);
     }
-    if let Some(fps) = plan.fps {
+    if let Some(fps) = plan.video.fps {
         pieces.push(format!("fps={}", format_fps(fps)));
     }
-    if plan.hdr_action == HdrAction::ToneMapSdr {
-        if filters.zscale {
-            pieces.push(tonemap_filter_chain().to_string());
-        } else {
-            pieces.push(native_tonemap_filter_chain().to_string());
+    if plan.video.hdr_action == HdrAction::ToneMapSdr {
+        let algorithm = plan.video.tone_mapping.unwrap_or(ToneMappingOption::Hable);
+        pieces.push(tonemap_chain(algorithm, filters));
+    }
+    // Burn-in runs last, after tone mapping, so the text keeps its colours.
+    for track in &plan.subtitle_tracks {
+        if track.action == SubtitleAction::BurnIn {
+            pieces.push(burn_in_filter(input, track)?);
         }
     }
-    pieces.join(",")
+    Ok(pieces.join(","))
+}
+
+/// `subtitles='<input>':si=<index>` for a text track (§3.3).
+///
+/// The file name reaches an FFmpeg filter graph, so every character the parser
+/// treats specially is escaped: a file called `a'b:c.mkv` must not be able to
+/// terminate the filter or inject another one.
+fn burn_in_filter(input: &str, track: &SubtitleTrackPlan) -> Result<String, JobError> {
+    match track.encoder.as_deref() {
+        None | Some("subtitles") => Ok(format!(
+            "subtitles='{}':si={}",
+            escape_filter_path(input),
+            track.source_index
+        )),
+        Some("overlay") => Err(invalid(
+            "bitmap burn-in needs the overlay composite, which the subtitle engine adds in T5",
+        )),
+        Some(other) => Err(invalid(format!(
+            "`{other}` is not a burn-in mechanism; use `subtitles` for text tracks"
+        ))),
+    }
+}
+
+fn escape_filter_path(path: &str) -> String {
+    let mut escaped = String::with_capacity(path.len());
+    for character in path.chars() {
+        if matches!(character, '\\' | '\'' | ':' | ',' | '[' | ']' | ';') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
 }
 
 fn scale_filter(plan: &VideoPlan) -> Option<String> {
