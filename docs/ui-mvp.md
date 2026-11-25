@@ -54,7 +54,11 @@ La acción de añadir nunca inicia una conversión por sí sola.
 - Lista de archivos seleccionados con nombre, duración, resolución, códec y estado de inspección.
 - Selector de carpeta de salida; por defecto la última usada.
 - Selector de preset, agrupado por categoría.
-- Resumen del plan para el primer archivo: “Copiar video / Convertir audio a AAC / Quitar subtítulos”.
+- **Selector de pista de audio** por archivo, con la etiqueta de cada pista: idioma, códec, cantidad de canales y bitrate (`spa · eac3 · 5.1 · 640 kbps`). Sin idioma declarado lo dice, no deja el paréntesis vacío.
+- **Interruptor de realce de voz**: encendido pide `stereo_dialogue_boost` o `dual_track_universal`, apagado deja `passthrough`. Se deshabilita con el motivo visible cuando la pista elegida tiene menos de dos canales.
+- **Selector de subtítulos** más un par de radios **Suave / Incrustar**. Ambos controles se deshabilitan con el motivo visible cuando el archivo no trae subtítulos; el modo incrustar sigue disponible para una pista de mapa de bits, que es el único modo que puede llevarla.
+- **Resumen del plan** derivado de la misma selección que viaja en el pedido —idioma, modo de audio y subtítulos—, nunca de una frase escrita aparte que pueda contradecirlo.
+- Selector de resolución (`original`, `1080p`, `720p`, `480p`) y de calidad (CRF), que sobrescriben lo que el preset decidió y dejan constancia en el `reasoning[]` del plan.
 - Botón **Añadir a la cola**.
 - Aviso de archivos rechazados con el motivo, sin bloquear los válidos.
 
