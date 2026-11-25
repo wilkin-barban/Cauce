@@ -2,7 +2,7 @@
 
 **Feature:** Reemplazar el bloque global de pistas por una edición por archivo, en un diálogo modal, sin cambiar la versión: se mantiene `v0.2.0` y se reemplaza el artefacto publicado.
 **Autoridad normativa:** pedido del Tech Lead (L1) sobre `docs/ui-mvp.md` §4 y las pautas de Libadwaita ya usadas en la app. Complementa `docs/contracts.md` §2.2 y §6, que **no** cambian.
-**Estado:** Plan redactado. Implementación pendiente de este documento.
+**Estado:** T1 a T6 implementadas. T7 pendiente de empaquetado y reemplazo de artefacto.
 
 ---
 
@@ -145,3 +145,19 @@ Consecuencia que se asume y se documenta: la cola pasa a hacer N llamadas en vez
 Esta vez el preflight **pasó** —el candidato entra holgado en el presupuesto de contexto que rechazó la revisión de la fase entera— y aun así el reviewer `review-reliability` agotó los 120 s de primera salida: `prepared_reviewers: 0`, `submitted_reviewers: 0`, sin mutación.
 Con esto el diagnóstico queda cerrado y sin ambigüedad: **el proveedor `omniroute/antigravity/gemini-3.8-flash-tiered` no produce primera salida en 120 s para ningún tamaño de candidato.** No es el presupuesto de contexto (este candidato lo pasa), no es una lente (falló en resiliencia, en riesgo y en fiabilidad en distintas corridas) y no es el tamaño (366 líneas fallan igual que 3108).
 No se reintenta. El candidato queda sin recibo nativo. El arreglo sigue en manos del host: arreglar el proveedor o exportar `GENTLE_PI_REVIEW_RELAY_FIRST_OUTPUT_TIMEOUT_MS` con un valor mayor.
+
+**L5** — Implementación de T2–T6 completada:
+- T2: Eliminado el bloque global `tracks_group`, sus filas (`audio_row`, `voice_switch`, `subtitle_row`), sus campos en `Ui`, sus manejadores en `flows.rs` y los shims `current_selection` / `current_selection_mut` en `state.rs`.
+- T3: Botón `file-options` con icono `document-edit-symbolic` por fila antes del botón de eliminar, deshabilitado con tooltip explicativo cuando no hay pistas alternativas (1 audio y 0 subtítulos).
+- T4: Módulo `track_dialog.rs` con diálogo modal (`adw::Dialog` + `adw::ToolbarView` + `adw::PreferencesPage`), combo de audio (visible solo si > 1 pista), switch de voz (deshabilitado con razón explicativa cuando la pista elegida tiene < 2 canales) y combo de subtítulos cuya primera opción es "Sin subtítulos" (`SubtitleMode::Strip`).
+- T5: Claves i18n agregadas con paridad estricta en los catálogos `es.rs`, `en.rs` y `pt_br.rs`.
+- T6: Suite de pruebas de vista bajo `xvfb-run` extendida cubriendo la ausencia del bloque global, la presencia de botones por fila con su propia ruta, la opción inicial "Sin subtítulos" y el aislamiento de cambios entre archivos independientes.
+
+
+**L5** — T2–T6 cerradas (`e595234` implementación, `7fd7cc0` pruebas). Verificado por el padre, no por reporte:
+- `tracks_group`: **0 ocurrencias** en `view.rs` y `flows.rs`.
+- Botón por fila con nombre de widget `file-options` en `view.rs:441`.
+- `track_dialog.rs` arma la lista de subtítulos con `convert.track_none` como **primera** entrada, mapeada a `SubtitleMode::Strip` (líneas 135 y 237).
+- Paridad i18n: **10 claves** `convert.track_*` en cada uno de los tres catálogos.
+- `cargo test --workspace`: **70 binarios, 438 pruebas, 0 fallos**; `clippy -D warnings` 0 warnings; `fmt` limpio; `window-ready` bajo Xvfb.
+El worker se detuvo una vez para preguntar dónde vivía el módulo `convert` en vez de inventar `mod.rs`. Esa parada evitó un `E0761`; la corrección fue mía, que había autorizado una superficie inexistente.
