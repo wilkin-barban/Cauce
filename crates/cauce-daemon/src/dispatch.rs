@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cauce_core::{
-    CustomPreset, DuplicatePolicy, ErrorCode, Job, JobAction, JobError, JobState, MediaSnapshot,
-    Preset, Progress, Settings, Timestamp, plan_conversion, resolve_output_path, system_presets,
-    transition_for,
+    CustomConversionOptions, CustomPreset, DuplicatePolicy, ErrorCode, Job, JobAction, JobError,
+    JobState, MediaSnapshot, Preset, Progress, Settings, Timestamp, TrackSelection,
+    plan_conversion_with, resolve_output_path, system_presets, transition_for,
 };
 use cauce_ffmpeg::runner::ConversionChild;
 use cauce_jobs::Store;
@@ -264,7 +264,14 @@ impl Daemon {
         let snapshot: MediaSnapshot = protocol::decode(params, "snapshot")?;
         let preset_id = protocol::string_param(params, "preset_id")?;
         let preset = self.preset(&preset_id)?;
-        protocol::encode(&plan_conversion(&snapshot, &preset)?)
+        let selection = track_selection_param(params)?;
+        let options = custom_options_param(params)?;
+        protocol::encode(&plan_conversion_with(
+            &snapshot,
+            &preset,
+            selection.as_ref(),
+            options.as_ref(),
+        )?)
     }
 
     fn jobs_add(&self, params: Option<&Value>) -> Result<Value, JobError> {
@@ -299,6 +306,9 @@ impl Daemon {
             .transpose()?
             .unwrap_or(0);
 
+        let selection = track_selection_param(params)?;
+        let options = custom_options_param(params)?;
+
         let toolchain = cauce_ffmpeg::locate()?;
         let mut reserved: Vec<String> = self
             .store_mut()
@@ -316,7 +326,8 @@ impl Daemon {
             let probed_at = utc_now()?;
             let snapshot =
                 cauce_ffmpeg::probe::probe_file(&toolchain, Path::new(&input_path), probed_at)?;
-            let plan = plan_conversion(&snapshot, &preset)?;
+            let plan =
+                plan_conversion_with(&snapshot, &preset, selection.as_ref(), options.as_ref())?;
             let output_path = resolve_output_path(
                 &input_path,
                 &output_dir,
@@ -604,4 +615,23 @@ pub(crate) fn broadcast_queue(daemon: &Daemon) {
 
 fn utc_now() -> Result<Timestamp, JobError> {
     cauce_jobs::migrations::utc_now()
+}
+
+/// `track_selection` is optional: absent means the preset decides, which is the
+/// 0.1.x behaviour every existing client relies on.
+fn track_selection_param(params: Option<&Value>) -> Result<Option<TrackSelection>, JobError> {
+    protocol::optional_param(params, "track_selection")?
+        .map(|value| serde_json::from_value::<TrackSelection>(value).map_err(protocol::json_error))
+        .transpose()
+}
+
+/// `custom_options` is optional for the same reason.
+fn custom_options_param(
+    params: Option<&Value>,
+) -> Result<Option<CustomConversionOptions>, JobError> {
+    protocol::optional_param(params, "custom_options")?
+        .map(|value| {
+            serde_json::from_value::<CustomConversionOptions>(value).map_err(protocol::json_error)
+        })
+        .transpose()
 }

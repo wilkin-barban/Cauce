@@ -918,3 +918,123 @@ fn jobs_clear_finished_over_ipc() {
         "sin terminados la limpieza borra cero"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1: explicit selection and custom options on the wire (T7)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn media_plan_accepts_a_track_selection() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("plan-selection");
+    let snapshot = case.inspect_fixture(&fixture);
+
+    let plan = case.client.result(
+        "media.plan",
+        json!({
+            "snapshot": snapshot,
+            "preset_id": "system-smarttv-compat",
+            "track_selection": {
+                "audio_track_indices": [1],
+                "subtitle_track_index": null,
+                "subtitle_mode": "strip",
+                "audio_mix_mode": "stereo_dialogue_boost"
+            }
+        }),
+    );
+
+    let tracks = plan["audio_tracks"].as_array().expect("audio_tracks[]");
+    assert_eq!(tracks.len(), 1, "the boost mode emits one track: {plan}");
+    assert_eq!(tracks[0]["source_index"], json!(1));
+    assert_eq!(tracks[0]["channels"], json!(2));
+    assert_eq!(tracks[0]["filter"], json!("stereo_dialogue_boost"));
+}
+
+#[test]
+fn media_plan_rejects_an_audio_index_that_does_not_exist() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("plan-bad-index");
+    let snapshot = case.inspect_fixture(&fixture);
+
+    let code = case.client.error_code(
+        "media.plan",
+        json!({
+            "snapshot": snapshot,
+            "preset_id": "system-smarttv-compat",
+            "track_selection": {
+                "audio_track_indices": [42],
+                "subtitle_track_index": null,
+                "subtitle_mode": "strip",
+                "audio_mix_mode": "passthrough"
+            }
+        }),
+    );
+
+    assert_eq!(code, "PLAN_INVALID");
+}
+
+#[test]
+fn media_plan_without_a_selection_keeps_the_legacy_plan() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("plan-legacy");
+    let snapshot = case.inspect_fixture(&fixture);
+
+    let plan = case.client.result(
+        "media.plan",
+        json!({"snapshot": snapshot, "preset_id": "system-smarttv-compat"}),
+    );
+
+    assert!(
+        plan.get("audio_tracks").is_none(),
+        "an empty track list is omitted, so 0.1.x clients see the same shape: {plan}"
+    );
+    assert!(plan["audio"]["filter"].is_string() || plan["audio"]["action"] != json!("transcode"));
+}
+
+#[test]
+fn jobs_add_persists_the_plan_with_its_track_list() {
+    let Some(fixture) = ready() else {
+        return;
+    };
+    let mut case = Case::new("jobs-selection");
+    let output_dir = case.dir.join("salida");
+    std::fs::create_dir_all(&output_dir).expect("carpeta de salida");
+
+    let added = case.client.result(
+        "jobs.add",
+        json!({
+            "inputs": [fixture.to_string_lossy()],
+            "preset_id": "system-smarttv-compat",
+            "output_dir": output_dir.to_string_lossy(),
+            "track_selection": {
+                "audio_track_indices": [1],
+                "subtitle_track_index": null,
+                "subtitle_mode": "strip",
+                "audio_mix_mode": "stereo_dialogue_boost"
+            },
+            "custom_options": {"resolution": "720p", "crf": 22}
+        }),
+    );
+
+    let first = if added.is_array() {
+        added[0].clone()
+    } else if added["jobs"].is_array() {
+        added["jobs"][0].clone()
+    } else {
+        added.clone()
+    };
+    let id = first["id"].as_str().expect("id").to_string();
+    let job = case.client.result("jobs.get", json!({"id": id}));
+
+    let plan = &job["plan"];
+    let tracks = plan["audio_tracks"].as_array().expect("persisted tracks");
+    assert_eq!(tracks.len(), 1, "{job}");
+    assert_eq!(plan["video"]["max_height"], json!(720), "{job}");
+    assert_eq!(plan["video"]["quality"], json!(22), "{job}");
+}

@@ -333,3 +333,14 @@ El corte se abrió porque el usuario lo designó como punto de review, no por in
 El capture agrupado devolvió el forecast esperado (`pi_host_relay`, 3 corridas: risk, resilience, reliability) y, al ejecutarlo, **`review-risk` agotó el límite de 120 s de primera salida**. `prepared_reviewers: 0`, `submitted_reviewers: 0`, sin mutación.
 **Diagnóstico corregido:** los dos timeouts anteriores fueron siempre sobre `review-resilience`, lo que sugería una lente problemática. Este tercero falló en `review-risk` con el **mismo modelo** (`omniroute/antigravity/gemini-3.8-flash-tiered`) y el mismo límite. Las tres lentes usan ese modelo, así que el proveedor está caído para todo el relay de review, no una lente en particular.
 No se reintenta: el proveedor prohíbe relanzar el mismo slot sin cambios. **El candidato sigue sin recibo.** Para destrabarlo hace falta una de dos cosas, ambas fuera del alcance de la sesión: arreglar/cambiar el proveedor, o exportar `GENTLE_PI_REVIEW_RELAY_FIRST_OUTPUT_TIMEOUT_MS` con un valor mayor en el host.
+
+**L14** — Corte T1–T6 **aprobado por escrito por el Tech Lead** tras el tercer timeout del relay. La aprobación se apoya en evidencia local (66 binarios, 402 pruebas, `clippy` 0 warnings, `fmt` limpio) y **no es un recibo de review nativa**: la lineage `review-1831bbbccdf1e1c3` quedó abierta y sin enviar. Queda registrado así para que nadie confunda una decisión humana con una aprobación del proveedor.
+
+**L15** — T7 (`feat(daemon): accept track selection and custom options`) ejecutada.
+RED: `cargo test -p cauce-daemon --test ipc_methods` → 3 fallos: `media_plan_accepts_a_track_selection`, `media_plan_rejects_an_audio_index_that_does_not_exist` y `jobs_add_persists_the_plan_with_its_track_list`. El test de compatibilidad (`media_plan_without_a_selection_keeps_the_legacy_plan`) ya pasaba, que es exactamente lo que debe hacer un guard de G0 antes del cambio.
+GREEN: 25 tests en `ipc_methods`, suite completa en verde.
+Decisiones registradas:
+1. Los parámetros se leen con `protocol::optional_param`, el mismo helper que usa `duplicate_policy`, y se deserializan a los tipos del dominio. Un `track_selection` malformado sale como `INVALID_INPUT` por el camino que ya existía, sin un validador paralelo.
+2. `media.plan` y `jobs.add` llaman a `plan_conversion_with`. La persistencia no necesitó cambios: `plan_json` guarda el plan serializado y los campos nuevos viajan solos, omitiéndose cuando están vacíos.
+3. Un índice inexistente devuelve `PLAN_INVALID` desde el planner, no desde el parser: el índice es sintácticamente válido, lo que no existe es la pista.
+4. El test de persistencia crea la carpeta de salida antes de encolar: `jobs.add` autoriza la ruta y falla si no existe, que es el comportamiento correcto y no un defecto.

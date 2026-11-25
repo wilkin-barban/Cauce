@@ -206,8 +206,8 @@ Envolvente de error:
 |---|---|---|
 | `initialize` | `client_name`, `client_version` | `server_version`, `protocol_version` |
 | `media.inspect` | `paths[]` | `MediaSnapshot[]` |
-| `media.plan` | `snapshot`, `preset_id` | `ConversionPlan` |
-| `jobs.add` | `inputs[]`, `output_dir`, `preset_id`, `duplicate_policy?`, `priority?` | `Job[]` |
+| `media.plan` | `snapshot`, `preset_id`, `track_selection?`, `custom_options?` | `ConversionPlan` |
+| `jobs.add` | `inputs[]`, `output_dir`, `preset_id`, `duplicate_policy?`, `priority?`, `track_selection?`, `custom_options?` | `Job[]` |
 | `jobs.list` | `states?[]` | `Job[]` |
 | `jobs.get` | `id` | `Job` |
 | `jobs.pause` | `id` | `Job` |
