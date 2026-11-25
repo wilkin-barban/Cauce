@@ -334,22 +334,6 @@ impl ConvertState {
         requests
     }
 
-    /// Selection of the first accepted file.
-    ///
-    /// Kept only while the page still has one global track block; T2 removes the
-    /// block and this shim with it.
-    pub fn current_selection(&self) -> Option<&FileSelection> {
-        self.accepted
-            .first()
-            .and_then(|snap| self.selections.get(&snap.path))
-    }
-
-    /// Mutable counterpart of [`ConvertState::current_selection`].
-    pub fn current_selection_mut(&mut self) -> Option<&mut FileSelection> {
-        let path = self.accepted.first()?.path.clone();
-        self.selection_for_mut(&path)
-    }
-
     /// Selection of `path`, if it is known.
     pub fn selection_for(&self, path: &str) -> Option<&FileSelection> {
         self.selections.get(path)

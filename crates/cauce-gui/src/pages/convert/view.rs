@@ -10,7 +10,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use adw::gio;
 use adw::gtk;
 use adw::prelude::*;
 use libadwaita as adw;
@@ -74,13 +73,6 @@ pub struct Ui {
     pub queue_button: gtk::Button,
     pub stack: gtk::Stack,
     pub blocked: adw::StatusPage,
-    pub audio_dropdown: gtk::DropDown,
-    pub voice_switch: adw::SwitchRow,
-    pub subtitle_row: adw::ActionRow,
-    pub subtitle_dropdown: gtk::DropDown,
-    pub subtitle_soft_radio: gtk::ToggleButton,
-    pub subtitle_burn_radio: gtk::ToggleButton,
-    pub tracks_group: adw::PreferencesGroup,
 }
 
 impl Ui {
@@ -230,46 +222,6 @@ impl Ui {
             button.set_label(t("convert.command_copied"));
         });
 
-        let audio_dropdown = gtk::DropDown::new(None::<gio::ListModel>, None::<gtk::Expression>);
-        audio_dropdown.set_widget_name("audio-dropdown");
-        let audio_row = adw::ActionRow::new();
-        audio_row.set_title(t("convert.audio_track"));
-        audio_row.add_suffix(&audio_dropdown);
-
-        let voice_switch = adw::SwitchRow::new();
-        voice_switch.set_title(t("convert.voice_enhancement"));
-        voice_switch.set_subtitle(t("convert.voice_enhancement_desc"));
-        voice_switch.set_widget_name("voice-switch");
-
-        let subtitle_dropdown = gtk::DropDown::new(None::<gio::ListModel>, None::<gtk::Expression>);
-        subtitle_dropdown.set_widget_name("subtitle-dropdown");
-        let subtitle_soft_radio = gtk::ToggleButton::with_label(t("convert.subtitle_mode_soft"));
-        subtitle_soft_radio.set_widget_name("subtitle-soft-radio");
-        subtitle_soft_radio.add_css_class("flat");
-        let subtitle_burn_radio = gtk::ToggleButton::with_label(t("convert.subtitle_mode_burn"));
-        subtitle_burn_radio.set_widget_name("subtitle-burn-radio");
-        subtitle_burn_radio.add_css_class("flat");
-        subtitle_burn_radio.set_group(Some(&subtitle_soft_radio));
-        subtitle_soft_radio.set_active(true);
-
-        let subtitle_radios = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        subtitle_radios.append(&subtitle_soft_radio);
-        subtitle_radios.append(&subtitle_burn_radio);
-
-        let subtitle_row = adw::ActionRow::new();
-        subtitle_row.set_title(t("convert.subtitle_track"));
-        subtitle_row.add_suffix(&subtitle_dropdown);
-        subtitle_row.add_suffix(&subtitle_radios);
-        subtitle_row.set_widget_name("subtitle-row");
-
-        let tracks_group = adw::PreferencesGroup::new();
-        tracks_group.set_title(t("convert.tracks_group"));
-        tracks_group.set_widget_name("tracks-group");
-        tracks_group.add(&audio_row);
-        tracks_group.add(&voice_switch);
-        tracks_group.add(&subtitle_row);
-        tracks_group.set_visible(false);
-
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
         body.set_margin_top(12);
         body.set_margin_bottom(12);
@@ -283,7 +235,6 @@ impl Ui {
         body.append(&phase_label);
         body.append(&rejected_box);
         body.append(&failure.area);
-        body.append(&tracks_group);
         body.append(&output_group);
         body.append(&preset_group);
         body.append(&plan_box);
@@ -344,13 +295,6 @@ impl Ui {
             queue_button,
             stack,
             blocked,
-            audio_dropdown,
-            voice_switch,
-            subtitle_row,
-            subtitle_dropdown,
-            subtitle_soft_radio,
-            subtitle_burn_radio,
-            tracks_group,
         }
     }
 }
@@ -480,12 +424,38 @@ fn ellipsize_labels(widget: &gtk::Widget, selected: &str) {
     }
 }
 
-pub fn file_row(snapshot: &MediaSnapshot, remove: &Rc<dyn Fn(String)>) -> adw::ActionRow {
+pub fn file_row(
+    snapshot: &MediaSnapshot,
+    options: &Rc<dyn Fn(String)>,
+    remove: &Rc<dyn Fn(String)>,
+) -> adw::ActionRow {
     let row = adw::ActionRow::new();
     let name = base_name(&snapshot.path);
     let (title, subtitle) = file_row_texts(&name, &summarize(snapshot));
     row.set_title(&title);
     row.set_subtitle(&subtitle);
+
+    // Options button per row
+    let options_btn = gtk::Button::from_icon_name("document-edit-symbolic");
+    options_btn.add_css_class("flat");
+    options_btn.set_widget_name("file-options");
+    let has_options = snapshot.audio_streams.len() > 1 || !snapshot.subtitle_streams.is_empty();
+    if has_options {
+        options_btn.set_tooltip_text(Some(t("convert.track_edit")));
+        options_btn.update_property(&[gtk::accessible::Property::Label(t("convert.track_edit"))]);
+        options_btn.connect_clicked({
+            let path = snapshot.path.clone();
+            let options = Rc::clone(options);
+            move |_| options(path.clone())
+        });
+    } else {
+        options_btn.set_sensitive(false);
+        options_btn.set_tooltip_text(Some(t("convert.track_unavailable")));
+        options_btn.update_property(&[gtk::accessible::Property::Label(t(
+            "convert.track_unavailable",
+        ))]);
+    }
+    row.add_suffix(&options_btn);
 
     // One removal per row, by name, so the list explains itself without a
     // selection mode (`docs/ui-mvp.md` §4 and §10).
@@ -525,10 +495,11 @@ pub fn refresh(
     ui: &Ui,
     state: &Rc<RefCell<ConvertState>>,
     presets: &Rc<RefCell<Vec<Preset>>>,
+    options: &Rc<dyn Fn(String)>,
     remove: &Rc<dyn Fn(String)>,
 ) -> Rc<dyn Fn()> {
     let (ui, state, presets) = (ui.clone(), Rc::clone(state), Rc::clone(presets));
-    let remove = Rc::clone(remove);
+    let (options, remove) = (Rc::clone(options), Rc::clone(remove));
     Rc::new(move || {
         let (
             accepted,
@@ -546,7 +517,6 @@ pub fn refresh(
             phase,
             can_queue,
             blocking,
-            selection,
         ) = {
             let state = state.borrow();
             let count = state.accepted_count();
@@ -572,7 +542,6 @@ pub fn refresh(
             let phase = state.phase();
             let can_queue = state.can_queue();
             let blocking = state.blocking().map(str::to_owned);
-            let selection = state.current_selection().cloned();
             (
                 state.accepted().to_vec(),
                 state.rejected().to_vec(),
@@ -589,13 +558,12 @@ pub fn refresh(
                 phase,
                 can_queue,
                 blocking,
-                selection,
             )
         };
 
         clear(&ui.files_list);
         for snapshot in &accepted {
-            ui.files_list.append(&file_row(snapshot, &remove));
+            ui.files_list.append(&file_row(snapshot, &options, &remove));
         }
         // The header counts and sizes the selection, and disappears with it.
         ui.selection_box.set_visible(count > 0);
@@ -606,153 +574,6 @@ pub fn refresh(
         // that is missing.
         ui.summary_label.set_label(&summary_sentence);
         ui.summary_label.set_visible(count > 0);
-
-        // Tracks & adjustments group
-        ui.tracks_group.set_visible(count > 0);
-        if let Some(snapshot) = accepted.first() {
-            // Audio dropdown
-            if snapshot.audio_streams.is_empty() {
-                ui.audio_dropdown.set_sensitive(false);
-                ui.audio_dropdown.set_model(None::<&gtk::StringList>);
-                ui.voice_switch.set_sensitive(false);
-                ui.voice_switch.set_subtitle(t("convert.track_no_audio"));
-                if ui.voice_switch.is_active() {
-                    ui.voice_switch.set_active(false);
-                }
-            } else {
-                ui.audio_dropdown.set_sensitive(true);
-                let model_needs_update = match ui.audio_dropdown.model() {
-                    Some(m) => m.n_items() != snapshot.audio_streams.len() as u32,
-                    None => true,
-                };
-                if model_needs_update {
-                    let labels: Vec<String> = snapshot
-                        .audio_streams
-                        .iter()
-                        .map(audio_track_label)
-                        .collect();
-                    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-                    let list = gtk::StringList::new(&label_refs);
-                    ui.audio_dropdown.set_model(Some(&list));
-                }
-
-                let selected_audio_idx = selection
-                    .as_ref()
-                    .and_then(|sel| sel.selection.audio_track_indices.first().copied())
-                    .unwrap_or(snapshot.audio_streams[0].index);
-
-                if let Some(pos) = snapshot
-                    .audio_streams
-                    .iter()
-                    .position(|s| s.index == selected_audio_idx)
-                {
-                    if ui.audio_dropdown.selected() != pos as u32 {
-                        ui.audio_dropdown.set_selected(pos as u32);
-                    }
-                }
-
-                let chosen_audio = snapshot
-                    .audio_streams
-                    .iter()
-                    .find(|s| s.index == selected_audio_idx)
-                    .unwrap_or(&snapshot.audio_streams[0]);
-
-                if chosen_audio.channels < 2 {
-                    ui.voice_switch.set_sensitive(false);
-                    ui.voice_switch
-                        .set_subtitle(t("convert.voice_enhancement_mono"));
-                    if ui.voice_switch.is_active() {
-                        ui.voice_switch.set_active(false);
-                    }
-                } else {
-                    ui.voice_switch.set_sensitive(true);
-                    ui.voice_switch
-                        .set_subtitle(t("convert.voice_enhancement_desc"));
-                    let is_boost = selection
-                        .as_ref()
-                        .map(|sel| {
-                            matches!(
-                                sel.selection.audio_mix_mode,
-                                cauce_core::AudioMixMode::StereoDialogueBoost
-                                    | cauce_core::AudioMixMode::DualTrackUniversal
-                            )
-                        })
-                        .unwrap_or(false);
-                    if ui.voice_switch.is_active() != is_boost {
-                        ui.voice_switch.set_active(is_boost);
-                    }
-                }
-            }
-
-            // Subtitles
-            if snapshot.subtitle_streams.is_empty() {
-                ui.subtitle_dropdown.set_sensitive(false);
-                ui.subtitle_dropdown.set_model(None::<&gtk::StringList>);
-                ui.subtitle_soft_radio.set_sensitive(false);
-                ui.subtitle_burn_radio.set_sensitive(false);
-                ui.subtitle_row.set_subtitle(t("convert.subtitles_none"));
-            } else {
-                ui.subtitle_dropdown.set_sensitive(true);
-                ui.subtitle_soft_radio.set_sensitive(true);
-                ui.subtitle_burn_radio.set_sensitive(true);
-                ui.subtitle_row.set_subtitle("");
-
-                let model_needs_update = match ui.subtitle_dropdown.model() {
-                    Some(m) => m.n_items() != snapshot.subtitle_streams.len() as u32,
-                    None => true,
-                };
-                if model_needs_update {
-                    let labels: Vec<String> = snapshot
-                        .subtitle_streams
-                        .iter()
-                        .map(subtitle_track_label)
-                        .collect();
-                    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-                    let list = gtk::StringList::new(&label_refs);
-                    ui.subtitle_dropdown.set_model(Some(&list));
-                }
-
-                if let Some(sel) = &selection {
-                    if let Some(sub_idx) = sel.selection.subtitle_track_index {
-                        if let Some(pos) = snapshot
-                            .subtitle_streams
-                            .iter()
-                            .position(|s| s.index == sub_idx)
-                        {
-                            if ui.subtitle_dropdown.selected() != pos as u32 {
-                                ui.subtitle_dropdown.set_selected(pos as u32);
-                            }
-                        }
-                    }
-                    match sel.selection.subtitle_mode {
-                        cauce_core::SubtitleMode::BurnIn => {
-                            if !ui.subtitle_burn_radio.is_active() {
-                                ui.subtitle_burn_radio.set_active(true);
-                            }
-                        }
-                        _ => {
-                            if !ui.subtitle_soft_radio.is_active() {
-                                ui.subtitle_soft_radio.set_active(true);
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            ui.audio_dropdown.set_sensitive(false);
-            ui.audio_dropdown.set_model(None::<&gtk::StringList>);
-            ui.voice_switch.set_sensitive(false);
-            ui.voice_switch
-                .set_subtitle(t("convert.voice_enhancement_desc"));
-            if ui.voice_switch.is_active() {
-                ui.voice_switch.set_active(false);
-            }
-            ui.subtitle_dropdown.set_sensitive(false);
-            ui.subtitle_dropdown.set_model(None::<&gtk::StringList>);
-            ui.subtitle_soft_radio.set_sensitive(false);
-            ui.subtitle_burn_radio.set_sensitive(false);
-            ui.subtitle_row.set_subtitle("");
-        }
 
         // The confirmation of the last `jobs.add`, with the way to the queue.
         ui.confirm_box.set_visible(confirmation.is_some());

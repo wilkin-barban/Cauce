@@ -16,6 +16,7 @@
 
 pub mod flows;
 pub mod state;
+pub mod track_dialog;
 pub mod view;
 
 pub use state::{

@@ -36,18 +36,9 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
     // the Cola page keeps its row handlers.
     let redraw: RedrawSlot = Rc::new(RefCell::new(None));
     let remove = removal_handle(state, &redraw);
-    let raw_refresh = view::refresh(ui, state, &presets, &remove);
-    let updating = Rc::new(std::cell::Cell::new(false));
-    let refresh: Rc<dyn Fn()> = {
-        let raw_refresh = Rc::clone(&raw_refresh);
-        let updating = Rc::clone(&updating);
-        Rc::new(move || {
-            updating.set(true);
-            raw_refresh();
-            updating.set(false);
-        })
-    };
     let run_plan = plan_handle(ui, client, state);
+    let options = options_handle(ui, state, &run_plan);
+    let refresh = view::refresh(ui, state, &presets, &options, &remove);
     *redraw.borrow_mut() = Some({
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         Rc::new(move || {
@@ -105,137 +96,6 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
             drop(s);
             refresh();
             run_plan();
-        }
-    });
-
-    ui.voice_switch.connect_active_notify({
-        let state = Rc::clone(state);
-        let run_plan = Rc::clone(&run_plan);
-        let updating = Rc::clone(&updating);
-        move |switch| {
-            if updating.get() {
-                return;
-            }
-            let active = switch.is_active();
-            let mode = if active {
-                cauce_core::AudioMixMode::StereoDialogueBoost
-            } else {
-                cauce_core::AudioMixMode::Passthrough
-            };
-            let Ok(mut s) = state.try_borrow_mut() else {
-                return;
-            };
-            if let Some(sel) = s.current_selection_mut() {
-                if sel.selection.audio_mix_mode != mode {
-                    sel.set_audio_mix_mode(mode);
-                    drop(s);
-                    run_plan();
-                }
-            }
-        }
-    });
-
-    ui.audio_dropdown.connect_selected_notify({
-        let state = Rc::clone(state);
-        let updating = Rc::clone(&updating);
-        let refresh = Rc::clone(&refresh);
-        let run_plan = Rc::clone(&run_plan);
-        move |dropdown| {
-            if updating.get() {
-                return;
-            }
-            let index = dropdown.selected() as usize;
-            let Ok(mut s) = state.try_borrow_mut() else {
-                return;
-            };
-            let first_snap = s.accepted().first().cloned();
-            if let Some(snap) = first_snap {
-                if let Some(stream) = snap.audio_streams.get(index) {
-                    let stream_idx = stream.index;
-                    if let Some(sel) = s.current_selection_mut() {
-                        if sel.selection.audio_track_indices.first() != Some(&stream_idx) {
-                            sel.set_audio_track(stream_idx, Some(&snap));
-                            drop(s);
-                            refresh();
-                            run_plan();
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    ui.subtitle_dropdown.connect_selected_notify({
-        let state = Rc::clone(state);
-        let updating = Rc::clone(&updating);
-        let run_plan = Rc::clone(&run_plan);
-        move |dropdown| {
-            if updating.get() {
-                return;
-            }
-            let index = dropdown.selected() as usize;
-            let Ok(mut s) = state.try_borrow_mut() else {
-                return;
-            };
-            let first_snap = s.accepted().first().cloned();
-            if let Some(snap) = first_snap {
-                if let Some(stream) = snap.subtitle_streams.get(index) {
-                    let stream_idx = stream.index;
-                    if let Some(sel) = s.current_selection_mut() {
-                        if sel.selection.subtitle_track_index != Some(stream_idx) {
-                            sel.set_subtitle_track(Some(stream_idx));
-                            drop(s);
-                            run_plan();
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    ui.subtitle_soft_radio.connect_toggled({
-        let state = Rc::clone(state);
-        let updating = Rc::clone(&updating);
-        let run_plan = Rc::clone(&run_plan);
-        move |radio| {
-            if updating.get() {
-                return;
-            }
-            if radio.is_active() {
-                let Ok(mut s) = state.try_borrow_mut() else {
-                    return;
-                };
-                if let Some(sel) = s.current_selection_mut() {
-                    if sel.selection.subtitle_mode != cauce_core::SubtitleMode::SoftEmbed {
-                        sel.set_subtitle_mode(cauce_core::SubtitleMode::SoftEmbed);
-                        drop(s);
-                        run_plan();
-                    }
-                }
-            }
-        }
-    });
-
-    ui.subtitle_burn_radio.connect_toggled({
-        let state = Rc::clone(state);
-        let updating = Rc::clone(&updating);
-        let run_plan = Rc::clone(&run_plan);
-        move |radio| {
-            if updating.get() {
-                return;
-            }
-            if radio.is_active() {
-                let Ok(mut s) = state.try_borrow_mut() else {
-                    return;
-                };
-                if let Some(sel) = s.current_selection_mut() {
-                    if sel.selection.subtitle_mode != cauce_core::SubtitleMode::BurnIn {
-                        sel.set_subtitle_mode(cauce_core::SubtitleMode::BurnIn);
-                        drop(s);
-                        run_plan();
-                    }
-                }
-            }
         }
     });
 
@@ -376,9 +236,10 @@ fn plan_handle(ui: &Ui, client: &Rc<Client>, state: &Rc<RefCell<ConvertState>>) 
         clear_plan(&ui);
         let (snapshot, preset_id, track_selection, custom_options) = {
             let state = state.borrow();
-            let sel = state.current_selection();
+            let snap = state.accepted().first().cloned();
+            let sel = snap.as_ref().and_then(|s| state.selection_for(&s.path));
             (
-                state.accepted().first().cloned(),
+                snap,
                 state.preset_id().map(str::to_owned),
                 sel.map(|s| s.selection.clone()),
                 sel.map(|s| s.options.clone()),
@@ -460,6 +321,43 @@ fn inspect_handle(
             refresh();
             run_plan();
         });
+    })
+}
+
+/// Opens the modal dialog to edit tracks for one file, writing changes to its selection.
+fn options_handle(
+    ui: &Ui,
+    state: &Rc<RefCell<ConvertState>>,
+    run_plan: &Rc<dyn Fn()>,
+) -> Rc<dyn Fn(String)> {
+    let (ui, state, run_plan) = (ui.clone(), Rc::clone(state), Rc::clone(run_plan));
+    Rc::new(move |path: String| {
+        let snapshot = {
+            let s = state.borrow();
+            s.accepted().iter().find(|snap| snap.path == path).cloned()
+        };
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        let selection = {
+            let mut s = state.borrow_mut();
+            s.selection_for_mut(&path).cloned()
+        };
+        let Some(selection) = selection else {
+            return;
+        };
+        let (state, run_plan, path) = (Rc::clone(&state), Rc::clone(&run_plan), path);
+        crate::pages::convert::track_dialog::present(
+            &ui.toolbar,
+            &snapshot,
+            &selection,
+            move |updated| {
+                if let Some(sel) = state.borrow_mut().selection_for_mut(&path) {
+                    *sel = updated;
+                }
+                run_plan();
+            },
+        );
     })
 }
 
