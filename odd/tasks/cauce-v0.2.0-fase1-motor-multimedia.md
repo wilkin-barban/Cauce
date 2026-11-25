@@ -305,3 +305,13 @@ Decisiones registradas:
 4. **Dirección de streams: absoluta (`-map 0:2`), no relativa (`-map 0:a:1`).** §3.4 (el código normativo) usa el índice absoluto del snapshot; §4.3 ilustra con la forma relativa para el mismo stream. Se sigue §3.4, que es inequívoca.
 5. **La curva por defecto es `hable` también sin `zscale`.** 0.1.1 emitía `mobius` fijo en el fallback porque no había elección; ahora la curva viene del plan y el default es el que los presets siempre significaron. El test de Fase 0 se actualizó a la verdad nueva y conserva el caso `mobius` explícito.
 6. **Burn-in de texto implementado; bitmap diferido a T5.** `encoder: Some("overlay")` en una pista `BurnIn` devuelve `PLAN_INVALID` con mensaje accionable en vez de emitir un `-filter_complex` a medio hacer.
+
+**L11** — T5 en dos commits (`feat(core): resolve subtitle tracks from the selected mode` + `feat(core): burn bitmap subtitles in with the overlay composite`), porque el planner y el composite del builder son unidades distintas con tests distintos.
+RED: `cargo test -p cauce-core --test subtitle_engine` → `error[E0432]: unresolved import cauce_core::compat::resolve_subtitles`; luego, al compilar, `burn_in_is_refused_when_the_preset_has_no_video` falló porque el preset de audio declara `subtitle_policy: remove` y esa rama cortaba antes.
+GREEN: 9 tests en `subtitle_engine`, 10 en `builder_v2`, suite completa en verde.
+Decisiones registradas:
+1. **Orden de precedencia en `resolve_subtitles`:** primero la contradicción física (burn-in sin video ⇒ `PLAN_INVALID`), después la política del preset (`remove` gana sobre la selección), después el modo del usuario. Incrustar subtítulos en un preset que no tiene video no es una preferencia, es un pedido imposible, y merece un error que lo diga.
+2. **Un soft embed imposible degrada, no aborta.** PGS en MP4 sin burn-in devuelve cero pistas con una línea que nombra códec, contenedor y la salida (`burn-in`). Es la regla de Fase 0 (BUG-003) aplicada ahora al motor nuevo.
+3. **`-vf` y `-filter_complex` no conviven.** Cuando hay una pista bitmap para incrustar, la cadena de video se mete dentro del grafo y el video se mapea como `[vout]`; el resto del `argv` no cambia.
+4. **Incrustar obliga a recodificar.** Un plan que combine `BurnIn` con `action: copy` en video se rechaza con mensaje accionable: prometer un copy con grafo de filtros es un trabajo que muere en FFmpeg.
+5. Las pistas bitmap se excluyen explícitamente de la cadena `-vf`, porque el grafo las posee; sin esa exclusión se emitirían dos veces.
