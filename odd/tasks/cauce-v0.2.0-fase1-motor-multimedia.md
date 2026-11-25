@@ -353,3 +353,13 @@ Decisiones registradas:
 3. Cambiar el preset recalcula **sólo** los campos que el usuario no tocó, con un registro por campo. Sin eso, elegir español y cambiar de preset borraba la elección en silencio.
 4. La validación previa a encolar nombra la ruta del archivo culpable: un error de cola sin archivo es un error que el usuario no puede accionar.
 **Nota de proceso:** el writer se trabó a los 91 turnos con un timeout del modelo, ya con T8 entregada y sin haber empezado T9. Se canceló en vez de continuarlo con estado incierto; T8 se verificó y commiteó aparte.
+
+**L17** — T10 (`feat(cli): add convert subcommand with track and downmix flags`) entregada por writer delegado y verificada por el padre.
+RED: `error[E0432]: unresolved import cauce_cli` (el crate no tenía librería).
+GREEN: 8 tests en `convert_cli`; `cargo test -p cauce-cli`, `clippy -p cauce-cli --all-targets -D warnings` y `workspace_boundaries` (3 tests) en verde.
+Decisiones registradas:
+1. **Cliente JSON-RPC mínimo dentro de `cauce-cli`**, no una crate compartida: `workspace_boundaries.rs` fija exactamente siete crates y agregar la octava rompe un contrato que un test protege. Decisión aprobada por el Tech Lead.
+2. Dependencias nuevas: `cauce-core` y `cauce-i18n` (del workspace) más `serde`/`serde_json`, ya usados en todo el árbol. Ninguna dependencia externa nueva.
+3. `--audio-lang` resuelve contra el snapshot real vía `media.inspect`, no contra una tabla fija: el idioma que no está en el archivo falla con mensaje accionable en vez de elegir la primera pista.
+4. Sin flags de selección, el request no incluye `track_selection` ni `custom_options`, así que es byte a byte el de un cliente 0.1.x.
+**Nota de proceso:** el writer reportó `cargo fmt`/`clippy` como "no instalados" porque no tenía el `PATH` hermético; las dos puertas se corrieron en el padre y pasan. Un reporte de verificación es tan bueno como el entorno donde se ejecutó.
