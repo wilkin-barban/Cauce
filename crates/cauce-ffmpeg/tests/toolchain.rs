@@ -15,6 +15,18 @@ use cauce_ffmpeg::{
     Toolchain, encoders, ffmpeg_version, ffprobe_version, filters, inspect, locate, locate_in,
 };
 
+/// `fork` inherits every open write descriptor, so a script one test is still
+/// writing can make another test's `execve` fail with `ETXTBSY` — the flake that
+/// shows up as "Text file busy". Serialising this file removes the race; every
+/// test here takes milliseconds.
+static SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serialized() -> std::sync::MutexGuard<'static, ()> {
+    SPAWN_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Temporary directory that removes itself, so the fakes leave nothing behind.
 struct TempDir {
     path: PathBuf,
@@ -115,6 +127,7 @@ fn error_of<T>(result: Result<T, JobError>) -> JobError {
 
 #[test]
 fn locates_the_system_toolchain() {
+    let _serial = serialized();
     let toolchain = match locate() {
         Ok(toolchain) => toolchain,
         Err(_) => return skip("locates_the_system_toolchain"),
@@ -141,6 +154,7 @@ fn locates_the_system_toolchain() {
 
 #[test]
 fn reads_real_versions() {
+    let _serial = serialized();
     let toolchain = match locate() {
         Ok(toolchain) => toolchain,
         Err(_) => return skip("reads_real_versions"),
@@ -167,6 +181,7 @@ fn reads_real_versions() {
 
 #[test]
 fn reports_every_mvp_encoder_present() {
+    let _serial = serialized();
     let toolchain = match locate() {
         Ok(toolchain) => toolchain,
         Err(_) => return skip("reports_every_mvp_encoder_present"),
@@ -184,6 +199,7 @@ fn reports_every_mvp_encoder_present() {
 
 #[test]
 fn reports_every_required_filter_present() {
+    let _serial = serialized();
     let toolchain = match locate() {
         Ok(toolchain) => toolchain,
         Err(_) => return skip("reports_every_required_filter_present"),
@@ -201,6 +217,7 @@ fn reports_every_required_filter_present() {
 
 #[test]
 fn inspects_the_real_toolchain() {
+    let _serial = serialized();
     let toolchain = match locate() {
         Ok(toolchain) => toolchain,
         Err(_) => return skip("inspects_the_real_toolchain"),
@@ -233,6 +250,7 @@ fn inspects_the_real_toolchain() {
 
 #[test]
 fn fails_when_ffmpeg_is_missing() {
+    let _serial = serialized();
     let error = error_of(locate_in("/nonexistent-cauce"));
 
     assert_eq!(error.code, ErrorCode::FfmpegMissing);
@@ -246,6 +264,7 @@ fn fails_when_ffmpeg_is_missing() {
 
 #[test]
 fn fails_when_only_ffprobe_is_present() {
+    let _serial = serialized();
     let dir = TempDir::new("only-ffprobe");
     let ffprobe = dir.script("ffprobe", &fake_ffprobe());
     assert!(ffprobe.exists());
@@ -263,6 +282,7 @@ fn fails_when_only_ffprobe_is_present() {
 
 #[test]
 fn reports_missing_encoders_from_a_fake_binary() {
+    let _serial = serialized();
     let dir = TempDir::new("fake-encoders");
     dir.script("ffmpeg", &fake_ffmpeg_without_x265());
     dir.script("ffprobe", &fake_ffprobe());
@@ -291,6 +311,7 @@ fn reports_missing_encoders_from_a_fake_binary() {
 
 #[test]
 fn rejects_a_binary_that_prints_garbage() {
+    let _serial = serialized();
     let dir = TempDir::new("garbage");
     let ffmpeg = dir.script("ffmpeg", "#!/bin/sh\necho 'not a banner'\n");
     let ffprobe = dir.script("ffprobe", &fake_ffprobe());
@@ -309,6 +330,7 @@ fn rejects_a_binary_that_prints_garbage() {
 
 #[test]
 fn zscale_is_optional_and_not_reported_as_missing() {
+    let _serial = serialized();
     let dir = TempDir::new("no-zscale");
     let fake_ffmpeg = format!(
         r#"#!/bin/sh

@@ -356,8 +356,11 @@ fn run_mock_daemon(
     socket_path: PathBuf,
     responses: Vec<(&'static str, serde_json::Value)>,
 ) -> std::thread::JoinHandle<()> {
+    // Bind before returning: when the listener was created inside the thread the
+    // client could connect first, the connection error turned a usage error into
+    // a runtime failure, and the exit-code assertion failed at random.
+    let listener = UnixListener::bind(&socket_path).expect("bind mock socket");
     std::thread::spawn(move || {
-        let listener = UnixListener::bind(&socket_path).expect("bind mock socket");
         let (mut stream, _) = listener.accept().expect("accept connection");
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
         for (expected_method, result_value) in responses {
