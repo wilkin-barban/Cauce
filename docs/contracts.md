@@ -79,6 +79,8 @@ Ambos son **opcionales** en `media.plan` y `jobs.add`: si el campo entero falta,
 | Duplicados | Prohibidos: dos entradas iguales producirían dos `-map` de la misma pista |
 | Tope | Cuatro pistas; el modo dual emite dos y el benchmark necesita una |
 
+**Precedencia del planificador.** Con `track_selection` presente, la pista elegida por índice gana sobre el idioma preferido del preset, que a su vez gana sobre la disposición `default` y sobre la primera pista. `audio_mix_mode: passthrough` con la lista vacía reproduce exactamente el comportamiento de v0.1. `custom_options` se aplica **después** del preset: resolución, CRF, codificador de video y curva de mapeo sobrescriben lo que el preset decidió, y cada sobrescritura deja su línea en `reasoning[]`.
+
 `subtitle_mode`: `soft_embed`, `burn_in`, `strip`. `audio_mix_mode`: `passthrough`, `stereo_dialogue_boost`, `dual_track_universal`. No existe `external_file` ni un booleano `dual_track_audio`: el enum es la única fuente de verdad (decisión registrada en [`odd/tasks/cauce-v0.2.0-fase1-motor-multimedia.md`](../odd/tasks/cauce-v0.2.0-fase1-motor-multimedia.md) L3).
 
 `CustomConversionOptions`: `resolution`, `crf?`, `video_bitrate_kbps?`, `video_codec?`, `audio_codec?`, `audio_bitrate_kbps?`, `tone_mapping`. Todos los campos tienen valor por defecto, así que `{"resolution": "1080p", "crf": 20}` es un payload válido.

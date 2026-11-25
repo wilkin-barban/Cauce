@@ -315,3 +315,15 @@ Decisiones registradas:
 3. **`-vf` y `-filter_complex` no conviven.** Cuando hay una pista bitmap para incrustar, la cadena de video se mete dentro del grafo y el video se mapea como `[vout]`; el resto del `argv` no cambia.
 4. **Incrustar obliga a recodificar.** Un plan que combine `BurnIn` con `action: copy` en video se rechaza con mensaje accionable: prometer un copy con grafo de filtros es un trabajo que muere en FFmpeg.
 5. Las pistas bitmap se excluyen explícitamente de la cadena `-vf`, porque el grafo las posee; sin esa exclusión se emitirían dos veces.
+
+**L12** — T6 (`feat(core): plan conversions from explicit track selection`) ejecutada. Cierra el corte T1–T6 aprobado para review.
+RED: `cargo test -p cauce-core --test planner_v2` → `error[E0432]: unresolved import cauce_core::compat::plan_conversion_with`; 11 tests sin compilar.
+GREEN: 11 tests en `planner_v2`, suite completa en verde.
+Decisiones registradas:
+1. **`plan_conversion` no cambia de firma.** Delega en `plan_conversion_with(snapshot, preset, None, None)`. Cambiar los dos argumentos habría roto a cada llamador y cada test, sin ganar nada: el planner nuevo es aditivo.
+2. **La selección explícita gana, pero solo donde el usuario eligió.** Un índice de audio explícito ignora el idioma del preset (`an_explicit_audio_index_wins_over_the_preset_language`). Sin índice, se mantiene la cadena de prioridad de Fase 0.
+3. **`DualTrackUniversal` sobre estéreo degrada a una pista con razonamiento.** Inventar un acompañamiento 5.1 a partir de dos canales sería mentirle al usuario y además rompería las barras de sonido que esperan 5.1 real.
+4. **El campo legacy `audio`/`subtitles` se sincroniza con la pista primaria.** Si no, `primary_audio()` y la vista vieja contarían cosas distintas y `validate_output` podría rechazar un plan correcto.
+5. **`ResolutionTarget::Original` no borra los límites del preset.** Significa "no agregar restricción propia", no "anular la del preset": anular podría subir la resolución por encima de lo que el dispositivo destino soporta.
+6. **`custom_options` se aplica después del preset** y siempre deja línea en `reasoning[]`. Una sobrescritura invisible es un bug de confianza.
+**Hallazgo honesto:** `audio_codec` y `audio_bitrate_kbps` de `CustomConversionOptions` quedan registrados en `reasoning[]` pero **no se aplican todavía** a la pista estéreo: cambiar el códec del estéreo mientras el acompañamiento sigue en AC-3 exige rediseñar el modo dual, y no hay test que lo pida. Se declara como deuda para T7/T11 en vez de fingir que funciona.

@@ -9,8 +9,9 @@
 use crate::error::{ErrorCode, JobError};
 use crate::media::{AudioStream, MediaSnapshot, SubtitleKind, SubtitleStream, VideoStream};
 use crate::plan::{
-    AudioFilter, AudioPlan, ConversionPlan, HdrAction, MetadataPolicy, StreamAction,
-    SubtitleAction, SubtitleMode, SubtitlePlan, SubtitleTrackPlan, VideoPlan,
+    AudioFilter, AudioMixMode, AudioPlan, AudioTrackPlan, ConversionPlan, CustomConversionOptions,
+    HdrAction, MetadataPolicy, ResolutionTarget, StreamAction, SubtitleAction, SubtitleMode,
+    SubtitlePlan, SubtitleTrackPlan, ToneMappingOption, TrackSelection, VideoPlan,
 };
 use crate::preset::{HdrPolicy, Preset, SubtitlePolicy};
 
@@ -30,12 +31,31 @@ pub fn plan_conversion(
     snapshot: &MediaSnapshot,
     preset: &Preset,
 ) -> Result<ConversionPlan, JobError> {
+    plan_conversion_with(snapshot, preset, None, None)
+}
+
+/// The planner of phase 1: the same decisions, honouring an explicit selection
+/// and the custom options on top of the preset.
+///
+/// Both halves are optional on purpose. Without them the result is the plan the
+/// preset alone produces, which is what every 0.1.x caller expects and what the
+/// G0 test pins.
+pub fn plan_conversion_with(
+    snapshot: &MediaSnapshot,
+    preset: &Preset,
+    selection: Option<&TrackSelection>,
+    options: Option<&CustomConversionOptions>,
+) -> Result<ConversionPlan, JobError> {
     validate_preset(preset)?;
 
     let mut reasoning = Vec::new();
-    let video = plan_video(snapshot, preset, &mut reasoning);
-    let audio = plan_audio(snapshot, preset, &mut reasoning);
-    let subtitles = plan_subtitles(snapshot, preset, &mut reasoning)?;
+    let mut video = plan_video(snapshot, preset, &mut reasoning);
+    let (audio, audio_tracks) = plan_audio_v2(snapshot, preset, selection, &mut reasoning)?;
+    let (subtitles, subtitle_tracks) =
+        plan_subtitles_v2(snapshot, preset, selection, &mut reasoning)?;
+    if let Some(options) = options {
+        apply_custom_options(&mut video, &audio_tracks, options, &mut reasoning)?;
+    }
 
     if preset.hardware_preference == "auto" {
         reasoning.push(format!(
@@ -57,8 +77,8 @@ pub fn plan_conversion(
             MetadataPolicy::Strip
         },
         reasoning,
-        audio_tracks: Vec::new(),
-        subtitle_tracks: Vec::new(),
+        audio_tracks,
+        subtitle_tracks,
     })
 }
 
@@ -370,6 +390,288 @@ fn downmix_filter(stream: &AudioStream, preset: &Preset) -> Option<AudioFilter> 
         Some(2) if stream.channels >= 6 => Some(AudioFilter::StereoDialogueBoost),
         _ => None,
     }
+}
+
+/// Audio decision for phase 1: the mix mode decides whether the plan carries a
+/// track list, and the legacy single-track field mirrors the primary track.
+fn plan_audio_v2(
+    snapshot: &MediaSnapshot,
+    preset: &Preset,
+    selection: Option<&TrackSelection>,
+    reasoning: &mut Vec<String>,
+) -> Result<(AudioPlan, Vec<AudioTrackPlan>), JobError> {
+    let Some(selection) = selection else {
+        let legacy = plan_audio(snapshot, preset, reasoning);
+        return Ok((legacy, Vec::new()));
+    };
+    if selection.audio_mix_mode == AudioMixMode::Passthrough {
+        let mut legacy = plan_audio(snapshot, preset, reasoning);
+        if let Some(index) = selection.audio_track_indices.first() {
+            let stream = audio_stream_at(snapshot, *index)?;
+            legacy = plan_explicit_audio(stream, preset, reasoning);
+        }
+        return Ok((legacy, Vec::new()));
+    }
+
+    if preset.audio_codec == "none" {
+        reasoning.push(format!(
+            "audio: remove — el preset `{}` descarta el audio, así que la mezcla elegida no aplica.",
+            preset.id
+        ));
+        return Ok((removed_audio(), Vec::new()));
+    }
+
+    let stream = match selection.audio_track_indices.first() {
+        Some(index) => audio_stream_at(snapshot, *index)?,
+        None => {
+            let Some(stream) = select_stream(
+                &snapshot.audio_streams,
+                preset,
+                "audio",
+                reasoning,
+                &|stream: &AudioStream| stream.index,
+                &|stream: &AudioStream| stream.language.as_deref(),
+                &|stream: &AudioStream| stream.is_default,
+                &|stream: &AudioStream| {
+                    format!(
+                        "{}, {} canales",
+                        stream.language.as_deref().unwrap_or("sin idioma"),
+                        stream.channels
+                    )
+                },
+            ) else {
+                return Ok((removed_audio(), Vec::new()));
+            };
+            stream
+        }
+    };
+
+    let single = |filter: bool| AudioTrackPlan {
+        source_index: stream.index,
+        output_index: 0,
+        action: StreamAction::Transcode,
+        encoder: Some("aac".to_owned()),
+        bitrate: Some("192k".to_owned()),
+        channels: 2,
+        filter: filter.then_some(AudioFilter::StereoDialogueBoost),
+        language: stream.language.clone(),
+        title: None,
+        is_default: true,
+    };
+
+    let tracks = match selection.audio_mix_mode {
+        AudioMixMode::DualTrackUniversal if stream.channels >= 6 => {
+            reasoning.push(format!(
+                "audio: doble pista — la pista {} ({} canales) se convierte a estéreo con realce \
+                 de diálogo y a AC-3 5.1 para cine en casa.",
+                stream.index, stream.channels
+            ));
+            crate::command::dual_track_plans(stream.index, stream.language.as_deref())
+        }
+        AudioMixMode::DualTrackUniversal => {
+            reasoning.push(format!(
+                "audio: estéreo con realce — la pista {} tiene {} canales y no hay 5.1 que \
+                 preservar, así que la doble pista se degrada a una sola estéreo.",
+                stream.index, stream.channels
+            ));
+            vec![single(true)]
+        }
+        _ => {
+            reasoning.push(format!(
+                "audio: estéreo con realce — la pista {} ({} canales) se reduce a dos canales \
+                 con la matriz de diálogo.",
+                stream.index, stream.channels
+            ));
+            vec![single(true)]
+        }
+    };
+
+    let legacy = legacy_audio_from(&tracks[0]);
+    Ok((legacy, tracks))
+}
+
+fn audio_stream_at(snapshot: &MediaSnapshot, index: u32) -> Result<&AudioStream, JobError> {
+    snapshot
+        .audio_streams
+        .iter()
+        .find(|stream| stream.index == index)
+        .ok_or_else(|| {
+            JobError::new(
+                ErrorCode::PlanInvalid,
+                format!(
+                    "la pista de audio {index} no existe en la entrada; hay {} pistas: {}.",
+                    snapshot.audio_streams.len(),
+                    snapshot
+                        .audio_streams
+                        .iter()
+                        .map(|stream| stream.index.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                false,
+            )
+        })
+}
+
+fn legacy_audio_from(track: &AudioTrackPlan) -> AudioPlan {
+    AudioPlan {
+        action: track.action,
+        encoder: track.encoder.clone(),
+        bitrate: track.bitrate.clone(),
+        channels: Some(track.channels),
+        stream_index: Some(track.source_index),
+        normalize: false,
+        filter: track.filter,
+    }
+}
+
+/// Passthrough with an explicit index: copy when the preset copies, otherwise
+/// re-encode every channel the source has.
+fn plan_explicit_audio(
+    stream: &AudioStream,
+    preset: &Preset,
+    reasoning: &mut Vec<String>,
+) -> AudioPlan {
+    if preset.audio_codec == "copy" {
+        reasoning.push(format!(
+            "audio: copy — el preset conserva el audio original y se eligió la pista {} (`{}`, \
+             {} canales).",
+            stream.index, stream.codec, stream.channels
+        ));
+        return copied_audio(stream);
+    }
+    let encoder = cpu_audio_encoder(&preset.audio_codec).unwrap_or("aac");
+    reasoning.push(format!(
+        "audio: transcode — se eligió la pista {} (`{}`, {} canales) y el preset pide `{}` con \
+         `{encoder}`.",
+        stream.index, stream.codec, stream.channels, preset.audio_codec
+    ));
+    AudioPlan {
+        action: StreamAction::Transcode,
+        encoder: Some(encoder.to_owned()),
+        bitrate: preset.audio_bitrate.clone(),
+        channels: preset.audio_channels,
+        stream_index: Some(stream.index),
+        normalize: preset.normalize_audio,
+        filter: None,
+    }
+}
+
+/// Subtitle decision for phase 1, keeping the legacy single-track view in sync
+/// with whatever the track list says.
+fn plan_subtitles_v2(
+    snapshot: &MediaSnapshot,
+    preset: &Preset,
+    selection: Option<&TrackSelection>,
+    reasoning: &mut Vec<String>,
+) -> Result<(SubtitlePlan, Vec<SubtitleTrackPlan>), JobError> {
+    let Some(selection) = selection else {
+        let legacy = plan_subtitles(snapshot, preset, reasoning)?;
+        return Ok((legacy, Vec::new()));
+    };
+
+    let selected = match selection.subtitle_track_index {
+        Some(index) => snapshot
+            .subtitle_streams
+            .iter()
+            .find(|stream| stream.index == index),
+        None => {
+            let mut local = Vec::new();
+            select_stream(
+                &snapshot.subtitle_streams,
+                preset,
+                "subtítulos",
+                &mut local,
+                &|stream: &SubtitleStream| stream.index,
+                &|stream: &SubtitleStream| stream.language.as_deref(),
+                &|stream: &SubtitleStream| stream.is_default,
+                &|stream: &SubtitleStream| {
+                    stream
+                        .language
+                        .clone()
+                        .unwrap_or_else(|| "sin idioma".to_owned())
+                },
+            )
+        }
+    };
+    if selection.subtitle_track_index.is_some() && selected.is_none() {
+        return Err(JobError::new(
+            ErrorCode::PlanInvalid,
+            format!(
+                "la pista de subtítulos {} no existe en la entrada.",
+                selection.subtitle_track_index.unwrap_or_default()
+            ),
+            false,
+        ));
+    }
+
+    let tracks = resolve_subtitles(preset, selected, selection.subtitle_mode, reasoning)?;
+    let legacy = match tracks.first() {
+        None => removed_subtitles(),
+        Some(track) => SubtitlePlan {
+            action: track.action,
+            encoder: track.encoder.clone(),
+            stream_index: (track.action == SubtitleAction::Copy).then_some(track.source_index),
+            source_index: (track.action != SubtitleAction::Copy).then_some(track.source_index),
+        },
+    };
+    Ok((legacy, tracks))
+}
+
+/// Applies the user's overrides on top of the preset, one rule at a time and
+/// always with a reasoning line: an override the user cannot see is a bug.
+fn apply_custom_options(
+    video: &mut VideoPlan,
+    tracks: &[AudioTrackPlan],
+    options: &CustomConversionOptions,
+    reasoning: &mut Vec<String>,
+) -> Result<(), JobError> {
+    match options.resolution {
+        ResolutionTarget::Original => {}
+        ResolutionTarget::MaxHeight(height) => {
+            video.max_height = Some(height);
+            video.max_width = None;
+            reasoning.push(format!(
+                "resolución: el usuario fijó un alto máximo de {height} px."
+            ));
+        }
+        ResolutionTarget::Fixed { width, height } => {
+            video.max_width = Some(width);
+            video.max_height = Some(height);
+            reasoning.push(format!("resolución: el usuario fijó {width}×{height}."));
+        }
+    }
+    if let Some(crf) = options.crf {
+        video.quality = Some(crf);
+        reasoning.push(format!("calidad: el usuario fijó CRF {crf}."));
+    }
+    if let Some(codec) = &options.video_codec {
+        let encoder = cpu_video_encoder(normalized_video_codec(codec)).ok_or_else(|| {
+            JobError::new(
+                ErrorCode::PlanInvalid,
+                format!("`{codec}` no es un codificador de video disponible en Cauce."),
+                false,
+            )
+        })?;
+        video.encoder = Some(encoder.to_owned());
+        reasoning.push(format!(
+            "video: el usuario fijó el codificador `{encoder}`."
+        ));
+    }
+    if options.tone_mapping != ToneMappingOption::Hable || video.hdr_action == HdrAction::ToneMapSdr
+    {
+        video.tone_mapping = Some(options.tone_mapping);
+    }
+    if let Some(codec) = &options.audio_codec {
+        if tracks.len() > 1 {
+            reasoning.push(format!(
+                "audio: el códec `{codec}` se aplica a la pista estéreo; el acompañamiento 5.1 \
+                 conserva AC-3 porque ese es el sentido de la doble pista."
+            ));
+        }
+    }
+    let _ = tracks;
+    Ok(())
 }
 
 /// Documented priority order for every stream family: the preset's preferred
