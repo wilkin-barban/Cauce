@@ -405,3 +405,9 @@ Trabajo `01a2109f` cancelado por IPC (`jobs.cancel`): el estado pasó a `cancell
 - **`G2` cerrada** con −22.2 LUFS integrados sobre el archivo real (dentro de −24 a −18), con la salvedad del pico declarada en L21.
 **Lo que NO queda verificado y no se declara como tal:** la conversión completa de los 22.6 GB no se repitió de punta a punta después del arreglo de `max_fps`. El plan es correcto, la ejecución arrancó y el defecto que la hizo inviable está corregido con test, pero la corrida íntegra queda pendiente como verificación de 0.2.1.
 **Sin recibo de review nativa:** la lineage `review-1831bbbccdf1e1c3` sigue abierta y sin enviar; el proveedor falló tres veces con el mismo límite. La aprobación es humana y está registrada como tal en L14.
+
+**L23** — Review de la fase completa (`sha256:b50a37ea…`, lineage `review-aa10b9c82745f0c1`): **imposible como candidato único.**
+A diferencia de los tres intentos anteriores —que morían en el modelo con el límite de 120 s—, este falló en **preflight** con `lens_context_budget_exceeded`: la evidencia completa de las lentes excede el presupuesto de contexto del proveedor. `mutation_outcome: not_started`, sin autoridad creada, sin nada que reparar.
+El propio proveedor indica la única salida: **revisar en una cadena de candidatos más chicos**, cada uno bajo el presupuesto, no truncar la evidencia.
+Cortes naturales disponibles, en orden histórico: T1+T2 (contrato y plan v2), T3+T4 (motor acústico y builder), T5 (subtítulos), T6 (planner), T7 (IPC), T8+T9 (GUI), y el arreglo de `max_fps` + preparación de release.
+Esto convierte la "review de la fase" en siete u ocho reviews encadenadas contra un proveedor que además falla por timeout en el modelo. Es una decisión de costo del humano, no una que corresponda tomar por la ventana.
