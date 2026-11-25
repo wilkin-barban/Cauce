@@ -363,3 +363,12 @@ Decisiones registradas:
 3. `--audio-lang` resuelve contra el snapshot real vía `media.inspect`, no contra una tabla fija: el idioma que no está en el archivo falla con mensaje accionable en vez de elegir la primera pista.
 4. Sin flags de selección, el request no incluye `track_selection` ni `custom_options`, así que es byte a byte el de un cliente 0.1.x.
 **Nota de proceso:** el writer reportó `cargo fmt`/`clippy` como "no instalados" porque no tenía el `PATH` hermético; las dos puertas se corrieron en el padre y pasan. Un reporte de verificación es tan bueno como el entorno donde se ejecutó.
+
+**L18** — T9 (`feat(gui): add track, subtitle and quality controls to the convert page`) entregada al tercer intento y verificada por el padre.
+RED: 16 errores de compilación en `convert_view` — faltaban `audio_track_label`, `plan_selection_summary`, seis campos en `Ui` y `current_selection` en `ConvertState`.
+GREEN: 16 tests en `convert_view`, 94 en `cauce-gui`, suite completa en verde; `window-ready` bajo Xvfb.
+Decisiones registradas:
+1. Los dos primeros writers se trabaron (91 y 126 turnos) y el segundo dejó 327 líneas de tests sin implementación. Ese trabajo no se descartó: **los tests se convirtieron en el contrato cerrado** que se le pasó al tercero, que terminó en una sola corrida. Un RED bien escrito es la mejor especificación que se le puede dar a un writer.
+2. El resumen del plan se arma con `plan_selection_summary` sobre la misma selección que viaja en el `QueueRequest`, no con una frase paralela. Si divergiera, la UI mentiría sobre lo que va a convertir.
+3. `QueueRequest` lleva `track_selection` y `custom_options` opcionales; `plan_handle` y `queue_handle` los reenvían. Un control que no llega al request es decoración.
+4. El writer dejó en rojo `clippy --all-targets` por un `&t(...)` en un test propio. Lo corregí yo: la puerta del CI es `--all-targets -D warnings`, no `--lib --bins`, y verificarse con la mitad de la puerta no es verificarse.

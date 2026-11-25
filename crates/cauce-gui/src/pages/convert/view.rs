@@ -10,12 +10,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use adw::gio;
 use adw::gtk;
 use adw::prelude::*;
 use libadwaita as adw;
 
 use super::flows;
-use cauce_core::{MediaSnapshot, Preset};
+use cauce_core::{CustomConversionOptions, MediaSnapshot, Preset, TrackSelection};
 
 use super::state::{
     ConvertPhase, ConvertState, FFMPEG_COMMAND, RejectedInput, base_name, summarize,
@@ -73,6 +74,13 @@ pub struct Ui {
     pub queue_button: gtk::Button,
     pub stack: gtk::Stack,
     pub blocked: adw::StatusPage,
+    pub audio_dropdown: gtk::DropDown,
+    pub voice_switch: adw::SwitchRow,
+    pub subtitle_row: adw::ActionRow,
+    pub subtitle_dropdown: gtk::DropDown,
+    pub subtitle_soft_radio: gtk::ToggleButton,
+    pub subtitle_burn_radio: gtk::ToggleButton,
+    pub tracks_group: adw::PreferencesGroup,
 }
 
 impl Ui {
@@ -222,6 +230,46 @@ impl Ui {
             button.set_label(t("convert.command_copied"));
         });
 
+        let audio_dropdown = gtk::DropDown::new(None::<gio::ListModel>, None::<gtk::Expression>);
+        audio_dropdown.set_widget_name("audio-dropdown");
+        let audio_row = adw::ActionRow::new();
+        audio_row.set_title(t("convert.audio_track"));
+        audio_row.add_suffix(&audio_dropdown);
+
+        let voice_switch = adw::SwitchRow::new();
+        voice_switch.set_title(t("convert.voice_enhancement"));
+        voice_switch.set_subtitle(t("convert.voice_enhancement_desc"));
+        voice_switch.set_widget_name("voice-switch");
+
+        let subtitle_dropdown = gtk::DropDown::new(None::<gio::ListModel>, None::<gtk::Expression>);
+        subtitle_dropdown.set_widget_name("subtitle-dropdown");
+        let subtitle_soft_radio = gtk::ToggleButton::with_label(t("convert.subtitle_mode_soft"));
+        subtitle_soft_radio.set_widget_name("subtitle-soft-radio");
+        subtitle_soft_radio.add_css_class("flat");
+        let subtitle_burn_radio = gtk::ToggleButton::with_label(t("convert.subtitle_mode_burn"));
+        subtitle_burn_radio.set_widget_name("subtitle-burn-radio");
+        subtitle_burn_radio.add_css_class("flat");
+        subtitle_burn_radio.set_group(Some(&subtitle_soft_radio));
+        subtitle_soft_radio.set_active(true);
+
+        let subtitle_radios = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        subtitle_radios.append(&subtitle_soft_radio);
+        subtitle_radios.append(&subtitle_burn_radio);
+
+        let subtitle_row = adw::ActionRow::new();
+        subtitle_row.set_title(t("convert.subtitle_track"));
+        subtitle_row.add_suffix(&subtitle_dropdown);
+        subtitle_row.add_suffix(&subtitle_radios);
+        subtitle_row.set_widget_name("subtitle-row");
+
+        let tracks_group = adw::PreferencesGroup::new();
+        tracks_group.set_title(t("convert.tracks_group"));
+        tracks_group.set_widget_name("tracks-group");
+        tracks_group.add(&audio_row);
+        tracks_group.add(&voice_switch);
+        tracks_group.add(&subtitle_row);
+        tracks_group.set_visible(false);
+
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
         body.set_margin_top(12);
         body.set_margin_bottom(12);
@@ -235,6 +283,7 @@ impl Ui {
         body.append(&phase_label);
         body.append(&rejected_box);
         body.append(&failure.area);
+        body.append(&tracks_group);
         body.append(&output_group);
         body.append(&preset_group);
         body.append(&plan_box);
@@ -295,6 +344,13 @@ impl Ui {
             queue_button,
             stack,
             blocked,
+            audio_dropdown,
+            voice_switch,
+            subtitle_row,
+            subtitle_dropdown,
+            subtitle_soft_radio,
+            subtitle_burn_radio,
+            tracks_group,
         }
     }
 }
@@ -474,65 +530,254 @@ pub fn refresh(
     let (ui, state, presets) = (ui.clone(), Rc::clone(state), Rc::clone(presets));
     let remove = Rc::clone(remove);
     Rc::new(move || {
-        let state = state.borrow();
+        let (
+            accepted,
+            rejected,
+            count,
+            heading,
+            total_bytes,
+            summary_sentence,
+            confirmation,
+            confirmation_sentence,
+            is_busy,
+            error_data,
+            output_dir,
+            preset_id,
+            phase,
+            can_queue,
+            blocking,
+            selection,
+        ) = {
+            let state = state.borrow();
+            let count = state.accepted_count();
+            let preset_name = state.preset_id().and_then(|id| {
+                presets
+                    .borrow()
+                    .iter()
+                    .find(|preset| preset.id == id)
+                    .map(|preset| localized_preset_name(preset).to_owned())
+            });
+            let summary_sentence = state
+                .summary_line()
+                .with_preset(preset_name.as_deref())
+                .sentence();
+            let confirmation = state.confirmation();
+            let confirmation_sentence = state.confirmation_sentence();
+            let is_busy = state.phase() == ConvertPhase::Inspecting;
+            let error_data = state
+                .error()
+                .map(|e| (e.to_owned(), state.error_details().map(str::to_owned)));
+            let output_dir = state.output_dir().map(str::to_owned);
+            let preset_id = state.preset_id().map(str::to_owned);
+            let phase = state.phase();
+            let can_queue = state.can_queue();
+            let blocking = state.blocking().map(str::to_owned);
+            let selection = state.current_selection().cloned();
+            (
+                state.accepted().to_vec(),
+                state.rejected().to_vec(),
+                count,
+                state.selection_heading(),
+                state.accepted_total_bytes(),
+                summary_sentence,
+                confirmation,
+                confirmation_sentence,
+                is_busy,
+                error_data,
+                output_dir,
+                preset_id,
+                phase,
+                can_queue,
+                blocking,
+                selection,
+            )
+        };
+
         clear(&ui.files_list);
-        for snapshot in state.accepted() {
+        for snapshot in &accepted {
             ui.files_list.append(&file_row(snapshot, &remove));
         }
         // The header counts and sizes the selection, and disappears with it.
-        let count = state.accepted_count();
         ui.selection_box.set_visible(count > 0);
-        ui.selection_heading.set_label(&state.selection_heading());
+        ui.selection_heading.set_label(&heading);
         ui.selection_size
-            .set_label(&crate::pages::diagnostics::human_bytes(
-                state.accepted_total_bytes(),
-            ));
+            .set_label(&crate::pages::diagnostics::human_bytes(total_bytes));
         // The line before the CTA names the preset and the folder, or the piece
         // that is missing.
-        let preset_name = state.preset_id().and_then(|id| {
-            presets
-                .borrow()
-                .iter()
-                .find(|preset| preset.id == id)
-                .map(|preset| localized_preset_name(preset).to_owned())
-        });
-        ui.summary_label.set_label(
-            &state
-                .summary_line()
-                .with_preset(preset_name.as_deref())
-                .sentence(),
-        );
+        ui.summary_label.set_label(&summary_sentence);
         ui.summary_label.set_visible(count > 0);
+
+        // Tracks & adjustments group
+        ui.tracks_group.set_visible(count > 0);
+        if let Some(snapshot) = accepted.first() {
+            // Audio dropdown
+            if snapshot.audio_streams.is_empty() {
+                ui.audio_dropdown.set_sensitive(false);
+                ui.audio_dropdown.set_model(None::<&gtk::StringList>);
+                ui.voice_switch.set_sensitive(false);
+                ui.voice_switch.set_subtitle(t("convert.track_no_audio"));
+                if ui.voice_switch.is_active() {
+                    ui.voice_switch.set_active(false);
+                }
+            } else {
+                ui.audio_dropdown.set_sensitive(true);
+                let model_needs_update = match ui.audio_dropdown.model() {
+                    Some(m) => m.n_items() != snapshot.audio_streams.len() as u32,
+                    None => true,
+                };
+                if model_needs_update {
+                    let labels: Vec<String> = snapshot
+                        .audio_streams
+                        .iter()
+                        .map(audio_track_label)
+                        .collect();
+                    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let list = gtk::StringList::new(&label_refs);
+                    ui.audio_dropdown.set_model(Some(&list));
+                }
+
+                let selected_audio_idx = selection
+                    .as_ref()
+                    .and_then(|sel| sel.selection.audio_track_indices.first().copied())
+                    .unwrap_or(snapshot.audio_streams[0].index);
+
+                if let Some(pos) = snapshot
+                    .audio_streams
+                    .iter()
+                    .position(|s| s.index == selected_audio_idx)
+                {
+                    if ui.audio_dropdown.selected() != pos as u32 {
+                        ui.audio_dropdown.set_selected(pos as u32);
+                    }
+                }
+
+                let chosen_audio = snapshot
+                    .audio_streams
+                    .iter()
+                    .find(|s| s.index == selected_audio_idx)
+                    .unwrap_or(&snapshot.audio_streams[0]);
+
+                if chosen_audio.channels < 2 {
+                    ui.voice_switch.set_sensitive(false);
+                    ui.voice_switch
+                        .set_subtitle(t("convert.voice_enhancement_mono"));
+                    if ui.voice_switch.is_active() {
+                        ui.voice_switch.set_active(false);
+                    }
+                } else {
+                    ui.voice_switch.set_sensitive(true);
+                    ui.voice_switch
+                        .set_subtitle(t("convert.voice_enhancement_desc"));
+                    let is_boost = selection
+                        .as_ref()
+                        .map(|sel| {
+                            matches!(
+                                sel.selection.audio_mix_mode,
+                                cauce_core::AudioMixMode::StereoDialogueBoost
+                                    | cauce_core::AudioMixMode::DualTrackUniversal
+                            )
+                        })
+                        .unwrap_or(false);
+                    if ui.voice_switch.is_active() != is_boost {
+                        ui.voice_switch.set_active(is_boost);
+                    }
+                }
+            }
+
+            // Subtitles
+            if snapshot.subtitle_streams.is_empty() {
+                ui.subtitle_dropdown.set_sensitive(false);
+                ui.subtitle_dropdown.set_model(None::<&gtk::StringList>);
+                ui.subtitle_soft_radio.set_sensitive(false);
+                ui.subtitle_burn_radio.set_sensitive(false);
+                ui.subtitle_row.set_subtitle(t("convert.subtitles_none"));
+            } else {
+                ui.subtitle_dropdown.set_sensitive(true);
+                ui.subtitle_soft_radio.set_sensitive(true);
+                ui.subtitle_burn_radio.set_sensitive(true);
+                ui.subtitle_row.set_subtitle("");
+
+                let model_needs_update = match ui.subtitle_dropdown.model() {
+                    Some(m) => m.n_items() != snapshot.subtitle_streams.len() as u32,
+                    None => true,
+                };
+                if model_needs_update {
+                    let labels: Vec<String> = snapshot
+                        .subtitle_streams
+                        .iter()
+                        .map(subtitle_track_label)
+                        .collect();
+                    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let list = gtk::StringList::new(&label_refs);
+                    ui.subtitle_dropdown.set_model(Some(&list));
+                }
+
+                if let Some(sel) = &selection {
+                    if let Some(sub_idx) = sel.selection.subtitle_track_index {
+                        if let Some(pos) = snapshot
+                            .subtitle_streams
+                            .iter()
+                            .position(|s| s.index == sub_idx)
+                        {
+                            if ui.subtitle_dropdown.selected() != pos as u32 {
+                                ui.subtitle_dropdown.set_selected(pos as u32);
+                            }
+                        }
+                    }
+                    match sel.selection.subtitle_mode {
+                        cauce_core::SubtitleMode::BurnIn => {
+                            if !ui.subtitle_burn_radio.is_active() {
+                                ui.subtitle_burn_radio.set_active(true);
+                            }
+                        }
+                        _ => {
+                            if !ui.subtitle_soft_radio.is_active() {
+                                ui.subtitle_soft_radio.set_active(true);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            ui.audio_dropdown.set_sensitive(false);
+            ui.audio_dropdown.set_model(None::<&gtk::StringList>);
+            ui.voice_switch.set_sensitive(false);
+            ui.voice_switch
+                .set_subtitle(t("convert.voice_enhancement_desc"));
+            if ui.voice_switch.is_active() {
+                ui.voice_switch.set_active(false);
+            }
+            ui.subtitle_dropdown.set_sensitive(false);
+            ui.subtitle_dropdown.set_model(None::<&gtk::StringList>);
+            ui.subtitle_soft_radio.set_sensitive(false);
+            ui.subtitle_burn_radio.set_sensitive(false);
+            ui.subtitle_row.set_subtitle("");
+        }
+
         // The confirmation of the last `jobs.add`, with the way to the queue.
-        let confirmation = state.confirmation();
         ui.confirm_box.set_visible(confirmation.is_some());
         if confirmation.is_some() {
-            ui.confirm_label.set_label(&state.confirmation_sentence());
+            ui.confirm_label.set_label(&confirmation_sentence);
         }
         clear(&ui.rejected_list);
-        for rejected in state.rejected() {
-            ui.rejected_list.append(&rejected_row(rejected));
+        for r in &rejected {
+            ui.rejected_list.append(&rejected_row(r));
         }
-        ui.rejected_box.set_visible(!state.rejected().is_empty());
-        let busy = state.phase() == ConvertPhase::Inspecting;
-        ui.spinner.set_spinning(busy);
-        ui.inspecting.set_visible(busy);
-        match state.error() {
-            Some(message) => pages::show_parts(&ui.failure, message, state.error_details()),
+        ui.rejected_box.set_visible(!rejected.is_empty());
+        ui.spinner.set_spinning(is_busy);
+        ui.inspecting.set_visible(is_busy);
+        match &error_data {
+            Some((message, details)) => pages::show_parts(&ui.failure, message, details.as_deref()),
             None => pages::clear_failure(&ui.failure),
         }
         ui.output_row.set_subtitle(&pages::escaped(
-            state.output_dir().unwrap_or(t("convert.not_chosen")),
+            output_dir.as_deref().unwrap_or(t("convert.not_chosen")),
         ));
         // The ratified column of the current locale, never a catalog key.
-        let preset = state.preset_id().and_then(|id| {
-            presets
-                .borrow()
-                .iter()
-                .find(|preset| preset.id == id)
-                .cloned()
-        });
-        ui.phase_label.set_label(match state.phase() {
+        let preset = preset_id
+            .as_deref()
+            .and_then(|id| presets.borrow().iter().find(|p| p.id == id).cloned());
+        ui.phase_label.set_label(match phase {
             ConvertPhase::Ready => t("convert.phase_ready"),
             ConvertPhase::Partial => t("convert.phase_partial"),
             _ => "",
@@ -540,14 +785,14 @@ pub fn refresh(
         // Only a non-empty list gets a phase sentence: the empty state is the drop
         // card alone (`L54`).
         ui.phase_label
-            .set_visible(state.error().is_none() && !ui.phase_label.text().trim().is_empty());
+            .set_visible(error_data.is_none() && !ui.phase_label.text().trim().is_empty());
         ui.preset_group
             .set_description(preset.as_ref().map(localized_preset_description));
         if let Some(preset) = preset {
             ellipsize_value(&ui.preset_combo, localized_preset_name(&preset));
         }
-        ui.queue_button.set_sensitive(state.can_queue());
-        match state.blocking() {
+        ui.queue_button.set_sensitive(can_queue);
+        match blocking.as_deref() {
             Some(message) => {
                 ui.blocked.set_description(Some(message));
                 ui.stack.set_visible_child_name("blocked");
@@ -555,4 +800,142 @@ pub fn refresh(
             None => ui.stack.set_visible_child_name("main"),
         }
     })
+}
+
+/// Translates standard ISO language codes into the user's localized name.
+pub fn localized_language(lang: &str) -> String {
+    match lang.to_lowercase().as_str() {
+        "spa" | "es" => t("convert.lang_spanish").to_owned(),
+        "eng" | "en" => t("convert.lang_english").to_owned(),
+        "fra" | "fre" | "fr" => t("convert.lang_french").to_owned(),
+        "deu" | "ger" | "de" => t("convert.lang_german").to_owned(),
+        "ita" | "it" => t("convert.lang_italian").to_owned(),
+        "jpn" | "ja" => t("convert.lang_japanese").to_owned(),
+        "por" | "pt" => t("convert.lang_portuguese").to_owned(),
+        _ => lang.to_owned(),
+    }
+}
+
+/// Builds the visible label for an audio track in the dropdown.
+pub fn audio_track_label(stream: &cauce_core::AudioStream) -> String {
+    let lang = stream
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(localized_language)
+        .unwrap_or_else(|| t("convert.track_no_language").to_owned());
+
+    let codec = match stream.codec.to_lowercase().as_str() {
+        "eac3" => "E-AC-3",
+        "ac3" => "AC-3",
+        "aac" => "AAC",
+        "dts" => "DTS",
+        "flac" => "FLAC",
+        "opus" => "Opus",
+        "mp3" => "MP3",
+        "truehd" => "TrueHD",
+        "vorbis" => "Vorbis",
+        _ => &stream.codec,
+    };
+
+    let channels = match stream.channels {
+        1 => "1.0".to_owned(),
+        2 => "2.0".to_owned(),
+        6 => "5.1".to_owned(),
+        8 => "7.1".to_owned(),
+        n => format!("{n} ch"),
+    };
+
+    let sample_rate = if stream.sample_rate % 1000 == 0 {
+        format!("{} kHz", stream.sample_rate / 1000)
+    } else {
+        format!("{:.1} kHz", stream.sample_rate as f64 / 1000.0)
+    };
+
+    let mut parts = vec![format!("{codec} {channels}"), sample_rate];
+    if let Some(bps) = stream.bitrate_bps {
+        parts.push(format!("{} kbps", bps / 1000));
+    }
+
+    format!("{lang} ({})", parts.join(", "))
+}
+
+/// Builds the visible label for a subtitle track in the dropdown.
+pub fn subtitle_track_label(stream: &cauce_core::SubtitleStream) -> String {
+    let lang = stream
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(localized_language)
+        .unwrap_or_else(|| t("convert.track_no_language").to_owned());
+    format!("{lang} ({})", stream.codec)
+}
+
+/// Builds the selection summary string derived from track selection, options and probe.
+pub fn plan_selection_summary(
+    selection: &TrackSelection,
+    _options: Option<&CustomConversionOptions>,
+    snapshot: &MediaSnapshot,
+) -> String {
+    let audio_part = if let Some(&idx) = selection.audio_track_indices.first() {
+        if let Some(stream) = snapshot.audio_streams.iter().find(|s| s.index == idx) {
+            let lang = stream
+                .language
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(localized_language)
+                .unwrap_or_else(|| t("convert.track_no_language").to_owned());
+            let mode = match selection.audio_mix_mode {
+                cauce_core::AudioMixMode::Passthrough => t("convert.summary_audio_passthrough"),
+                cauce_core::AudioMixMode::StereoDialogueBoost => t("convert.summary_audio_boost"),
+                cauce_core::AudioMixMode::DualTrackUniversal => t("convert.summary_audio_dual"),
+            };
+            t_with("convert.summary_audio_part", "{lang}", &lang).replace("{mode}", mode)
+        } else {
+            t("convert.track_no_audio").to_owned()
+        }
+    } else {
+        match selection.audio_mix_mode {
+            cauce_core::AudioMixMode::Passthrough => {
+                t("convert.summary_audio_passthrough").to_owned()
+            }
+            cauce_core::AudioMixMode::StereoDialogueBoost => {
+                t("convert.summary_audio_boost").to_owned()
+            }
+            cauce_core::AudioMixMode::DualTrackUniversal => {
+                t("convert.summary_audio_dual").to_owned()
+            }
+        }
+    };
+
+    let sub_part = match selection.subtitle_mode {
+        cauce_core::SubtitleMode::Strip => t("convert.summary_subtitles_none").to_owned(),
+        cauce_core::SubtitleMode::SoftEmbed => {
+            let lang = selection
+                .subtitle_track_index
+                .and_then(|idx| snapshot.subtitle_streams.iter().find(|s| s.index == idx))
+                .and_then(|s| s.language.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(localized_language)
+                .unwrap_or_else(|| t("convert.track_no_language").to_owned());
+            t_with("convert.summary_subtitles_soft", "{lang}", &lang)
+        }
+        cauce_core::SubtitleMode::BurnIn => {
+            let lang = selection
+                .subtitle_track_index
+                .and_then(|idx| snapshot.subtitle_streams.iter().find(|s| s.index == idx))
+                .and_then(|s| s.language.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(localized_language)
+                .unwrap_or_else(|| t("convert.track_no_language").to_owned());
+            t_with("convert.summary_subtitles_burn", "{lang}", &lang)
+        }
+    };
+
+    format!("{audio_part} · {sub_part}")
 }

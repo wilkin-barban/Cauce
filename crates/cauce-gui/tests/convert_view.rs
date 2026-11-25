@@ -16,6 +16,7 @@ use cauce_gui::pages::convert::view::Ui;
 use cauce_gui::window::STYLE_SHEET;
 use libadwaita as adw;
 use libadwaita::gtk;
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{OnceLock, mpsc};
@@ -748,4 +749,328 @@ fn the_rows_of_the_page_escape_what_the_user_brings() {
     if !ran {
         skip("the_rows_of_the_page_escape_what_the_user_brings");
     }
+}
+
+#[test]
+fn the_audio_dropdown_lists_every_track() {
+    let ran = on_gtk_thread(|| {
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &remove);
+
+        let mut snap = sized_snapshot("/tmp/multi_audio.mkv", 1024);
+        snap.audio_streams = vec![
+            cauce_core::AudioStream {
+                index: 1,
+                codec: "eac3".to_owned(),
+                channels: 6,
+                sample_rate: 48000,
+                bitrate_bps: Some(640_000),
+                language: Some("spa".to_owned()),
+                is_default: true,
+            },
+            cauce_core::AudioStream {
+                index: 2,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 48000,
+                bitrate_bps: Some(192_000),
+                language: Some("eng".to_owned()),
+                is_default: false,
+            },
+            cauce_core::AudioStream {
+                index: 3,
+                codec: "aac".to_owned(),
+                channels: 2,
+                sample_rate: 44100,
+                bitrate_bps: Some(128_000),
+                language: Some("jpn".to_owned()),
+                is_default: false,
+            },
+        ];
+
+        state.borrow_mut().accept_probe(snap);
+        refresh();
+
+        let model = ui
+            .audio_dropdown
+            .model()
+            .expect("el dropdown de audio debe tener un modelo");
+        assert_eq!(
+            model.n_items(),
+            3,
+            "el dropdown debe listar las tres pistas de audio"
+        );
+    });
+    if !ran {
+        skip("the_audio_dropdown_lists_every_track");
+    }
+}
+
+#[test]
+fn the_audio_label_names_language_codec_and_channels() {
+    let stream = cauce_core::AudioStream {
+        index: 1,
+        codec: "eac3".to_owned(),
+        channels: 6,
+        sample_rate: 48000,
+        bitrate_bps: Some(640_000),
+        language: Some("Español Latino".to_owned()),
+        is_default: true,
+    };
+
+    let label = view::audio_track_label(&stream);
+    assert!(
+        label.contains("Español Latino"),
+        "la etiqueta debe incluir el idioma: {label}"
+    );
+    assert!(
+        label.contains("E-AC-3") || label.contains("eac3"),
+        "la etiqueta debe incluir el códec: {label}"
+    );
+    assert!(
+        label.contains("5.1"),
+        "la etiqueta debe incluir la configuración de canales 5.1: {label}"
+    );
+    assert!(
+        label.contains("48 kHz"),
+        "la etiqueta debe incluir la frecuencia de muestreo: {label}"
+    );
+    assert!(
+        label.contains("640 kbps"),
+        "la etiqueta debe incluir el bitrate: {label}"
+    );
+
+    // Sin idioma
+    let no_lang_stream = cauce_core::AudioStream {
+        index: 2,
+        codec: "aac".to_owned(),
+        channels: 2,
+        sample_rate: 44100,
+        bitrate_bps: None,
+        language: None,
+        is_default: false,
+    };
+    let no_lang_label = view::audio_track_label(&no_lang_stream);
+    assert!(
+        no_lang_label.contains(t("convert.track_no_language")),
+        "cuando falta el idioma debe indicarse explícitamente: {no_lang_label}"
+    );
+    assert!(
+        !no_lang_label.starts_with(" ("),
+        "los paréntesis no deben quedar vacíos al frente: {no_lang_label}"
+    );
+}
+
+#[test]
+fn the_voice_switch_maps_to_the_mix_mode() {
+    let ran = on_gtk_thread(|| {
+        let client = Rc::new(cauce_gui::client::Client::connect());
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        cauce_gui::pages::convert::flows::wire(&client, &ui, &state);
+
+        let mut snap = sized_snapshot("/tmp/voice.mkv", 1024);
+        snap.audio_streams = vec![cauce_core::AudioStream {
+            index: 1,
+            codec: "aac".to_owned(),
+            channels: 2,
+            sample_rate: 48000,
+            bitrate_bps: Some(192_000),
+            language: Some("spa".to_owned()),
+            is_default: true,
+        }];
+        state.borrow_mut().accept_probe(snap);
+
+        // Disparamos la actualización del estado en la UI
+        ui.voice_switch.set_active(true);
+        {
+            let s = state.borrow();
+            let sel = s
+                .current_selection()
+                .expect("debe haber una selección activa");
+            assert_eq!(
+                sel.selection.audio_mix_mode,
+                cauce_core::AudioMixMode::StereoDialogueBoost,
+                "el switch activo mapea a StereoDialogueBoost"
+            );
+        }
+
+        ui.voice_switch.set_active(false);
+        {
+            let s = state.borrow();
+            let sel = s
+                .current_selection()
+                .expect("debe haber una selección activa");
+            assert_eq!(
+                sel.selection.audio_mix_mode,
+                cauce_core::AudioMixMode::Passthrough,
+                "el switch inactivo mapea a Passthrough"
+            );
+        }
+
+        // Caso mono (< 2 canales): el switch se deshabilita con razón visible
+        let mut mono_snap = sized_snapshot("/tmp/mono.mkv", 1024);
+        mono_snap.audio_streams = vec![cauce_core::AudioStream {
+            index: 1,
+            codec: "aac".to_owned(),
+            channels: 1,
+            sample_rate: 48000,
+            bitrate_bps: Some(64_000),
+            language: Some("spa".to_owned()),
+            is_default: true,
+        }];
+        state.borrow_mut().clear_all();
+        state.borrow_mut().accept_probe(mono_snap);
+
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &remove);
+        refresh();
+
+        assert!(
+            !ui.voice_switch.is_sensitive(),
+            "el switch de voz debe deshabilitarse cuando la pista tiene menos de 2 canales"
+        );
+        let subtitle = ui.voice_switch.subtitle().unwrap_or_default();
+        assert!(
+            !subtitle.is_empty(),
+            "debe haber un motivo visible explicando por qué está deshabilitado"
+        );
+    });
+    if !ran {
+        skip("the_voice_switch_maps_to_the_mix_mode");
+    }
+}
+
+#[test]
+fn subtitle_controls_are_disabled_without_tracks() {
+    let ran = on_gtk_thread(|| {
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &remove);
+
+        let mut snap = sized_snapshot("/tmp/no_subs.mkv", 1024);
+        snap.subtitle_streams = vec![];
+        state.borrow_mut().accept_probe(snap);
+        refresh();
+
+        assert!(
+            !ui.subtitle_dropdown.is_sensitive(),
+            "el desplegable de subtítulos debe estar deshabilitado sin pistas"
+        );
+        assert!(
+            !ui.subtitle_soft_radio.is_sensitive(),
+            "el radio soft debe estar deshabilitado sin pistas"
+        );
+        assert!(
+            !ui.subtitle_burn_radio.is_sensitive(),
+            "el radio burn-in debe estar deshabilitado sin pistas"
+        );
+        let reason = ui.subtitle_row.subtitle().unwrap_or_default();
+        assert!(
+            !reason.is_empty(),
+            "debe explicarse visiblemente por qué están deshabilitados los controles de subtítulo"
+        );
+    });
+    if !ran {
+        skip("subtitle_controls_are_disabled_without_tracks");
+    }
+}
+
+#[test]
+fn burn_in_stays_available_for_a_bitmap_track() {
+    let ran = on_gtk_thread(|| {
+        let ui = Ui::build();
+        let state = Rc::new(RefCell::new(ConvertState::new()));
+        let presets = Rc::new(RefCell::new(Vec::new()));
+        let remove: Rc<dyn Fn(String)> = Rc::new(|_| {});
+        let refresh = view::refresh(&ui, &state, &presets, &remove);
+
+        let mut snap = sized_snapshot("/tmp/bitmap_sub.mkv", 1024);
+        snap.subtitle_streams = vec![cauce_core::SubtitleStream {
+            index: 3,
+            codec: "hdmv_pgs_subtitle".to_owned(),
+            language: Some("spa".to_owned()),
+            kind: cauce_core::SubtitleKind::Bitmap,
+            is_default: true,
+            is_forced: false,
+        }];
+        state.borrow_mut().accept_probe(snap);
+        refresh();
+
+        assert!(
+            ui.subtitle_burn_radio.is_sensitive(),
+            "burn-in debe permanecer disponible para una pista de subtítulo en mapa de bits"
+        );
+    });
+    if !ran {
+        skip("burn_in_stays_available_for_a_bitmap_track");
+    }
+}
+
+#[test]
+fn the_summary_names_language_mode_and_subtitles() {
+    let snap = cauce_core::MediaSnapshot {
+        path: "/tmp/oak.mkv".to_owned(),
+        container: "mkv".to_owned(),
+        duration_ms: 120_000,
+        size_bytes: 10_000_000,
+        bitrate_bps: 2_000_000,
+        video_streams: vec![],
+        audio_streams: vec![cauce_core::AudioStream {
+            index: 1,
+            codec: "eac3".to_owned(),
+            channels: 6,
+            sample_rate: 48000,
+            bitrate_bps: Some(640_000),
+            language: Some("Español Latino".to_owned()),
+            is_default: true,
+        }],
+        subtitle_streams: vec![cauce_core::SubtitleStream {
+            index: 2,
+            codec: "subrip".to_owned(),
+            language: Some("spa".to_owned()),
+            kind: cauce_core::SubtitleKind::Text,
+            is_default: true,
+            is_forced: false,
+        }],
+        probed_at: cauce_core::Timestamp::parse("2026-11-24T12:00:00Z").unwrap(),
+    };
+
+    let mut sel = cauce_gui::selection::FileSelection::from_probe(&snap, None);
+    sel.selection.audio_mix_mode = cauce_core::AudioMixMode::StereoDialogueBoost;
+    sel.selection.subtitle_mode = cauce_core::SubtitleMode::SoftEmbed;
+
+    let summary = view::plan_selection_summary(&sel.selection, Some(&sel.options), &snap);
+    assert!(
+        summary.contains("Español Latino"),
+        "el resumen debe nombrar el idioma de audio: {summary}"
+    );
+    assert!(
+        summary.contains("realce") || summary.contains("boost"),
+        "el resumen debe nombrar el modo de audio (realce de voz): {summary}"
+    );
+    assert!(
+        summary.contains("suaves") || summary.contains("soft"),
+        "el resumen debe nombrar la opción de subtítulos: {summary}"
+    );
+
+    // Cambiamos a Passthrough y Strip
+    sel.selection.audio_mix_mode = cauce_core::AudioMixMode::Passthrough;
+    sel.selection.subtitle_mode = cauce_core::SubtitleMode::Strip;
+
+    let summary2 = view::plan_selection_summary(&sel.selection, Some(&sel.options), &snap);
+    assert!(
+        summary2.contains("original") || summary2.contains("passthrough"),
+        "el resumen debe nombrar el modo passthrough/original: {summary2}"
+    );
+    assert!(
+        summary2.contains("sin subtítulos") || summary2.contains("without subtitles"),
+        "el resumen debe nombrar la omisión de subtítulos: {summary2}"
+    );
 }

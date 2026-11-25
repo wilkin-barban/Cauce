@@ -36,7 +36,17 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
     // the Cola page keeps its row handlers.
     let redraw: RedrawSlot = Rc::new(RefCell::new(None));
     let remove = removal_handle(state, &redraw);
-    let refresh = view::refresh(ui, state, &presets, &remove);
+    let raw_refresh = view::refresh(ui, state, &presets, &remove);
+    let updating = Rc::new(std::cell::Cell::new(false));
+    let refresh: Rc<dyn Fn()> = {
+        let raw_refresh = Rc::clone(&raw_refresh);
+        let updating = Rc::clone(&updating);
+        Rc::new(move || {
+            updating.set(true);
+            raw_refresh();
+            updating.set(false);
+        })
+    };
     let run_plan = plan_handle(ui, client, state);
     *redraw.borrow_mut() = Some({
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
@@ -83,12 +93,149 @@ pub fn wire(client: &Rc<Client>, ui: &Ui, state: &Rc<RefCell<ConvertState>>) {
         let (state, presets) = (Rc::clone(state), Rc::clone(&presets));
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         move |dropdown| {
-            let id = usize::try_from(dropdown.selected())
+            let selected_preset = usize::try_from(dropdown.selected())
                 .ok()
-                .and_then(|index| presets.borrow().get(index).map(|preset| preset.id.clone()));
-            state.borrow_mut().set_preset(id);
+                .and_then(|index| presets.borrow().get(index).cloned());
+            let id = selected_preset.as_ref().map(|preset| preset.id.clone());
+            let mut s = state.borrow_mut();
+            s.set_preset(id);
+            if let Some(p) = selected_preset {
+                s.apply_preset(&p);
+            }
+            drop(s);
             refresh();
             run_plan();
+        }
+    });
+
+    ui.voice_switch.connect_active_notify({
+        let state = Rc::clone(state);
+        let run_plan = Rc::clone(&run_plan);
+        let updating = Rc::clone(&updating);
+        move |switch| {
+            if updating.get() {
+                return;
+            }
+            let active = switch.is_active();
+            let mode = if active {
+                cauce_core::AudioMixMode::StereoDialogueBoost
+            } else {
+                cauce_core::AudioMixMode::Passthrough
+            };
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            if let Some(sel) = s.current_selection_mut() {
+                if sel.selection.audio_mix_mode != mode {
+                    sel.set_audio_mix_mode(mode);
+                    drop(s);
+                    run_plan();
+                }
+            }
+        }
+    });
+
+    ui.audio_dropdown.connect_selected_notify({
+        let state = Rc::clone(state);
+        let updating = Rc::clone(&updating);
+        let refresh = Rc::clone(&refresh);
+        let run_plan = Rc::clone(&run_plan);
+        move |dropdown| {
+            if updating.get() {
+                return;
+            }
+            let index = dropdown.selected() as usize;
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            let first_snap = s.accepted().first().cloned();
+            if let Some(snap) = first_snap {
+                if let Some(stream) = snap.audio_streams.get(index) {
+                    let stream_idx = stream.index;
+                    if let Some(sel) = s.current_selection_mut() {
+                        if sel.selection.audio_track_indices.first() != Some(&stream_idx) {
+                            sel.set_audio_track(stream_idx, Some(&snap));
+                            drop(s);
+                            refresh();
+                            run_plan();
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    ui.subtitle_dropdown.connect_selected_notify({
+        let state = Rc::clone(state);
+        let updating = Rc::clone(&updating);
+        let run_plan = Rc::clone(&run_plan);
+        move |dropdown| {
+            if updating.get() {
+                return;
+            }
+            let index = dropdown.selected() as usize;
+            let Ok(mut s) = state.try_borrow_mut() else {
+                return;
+            };
+            let first_snap = s.accepted().first().cloned();
+            if let Some(snap) = first_snap {
+                if let Some(stream) = snap.subtitle_streams.get(index) {
+                    let stream_idx = stream.index;
+                    if let Some(sel) = s.current_selection_mut() {
+                        if sel.selection.subtitle_track_index != Some(stream_idx) {
+                            sel.set_subtitle_track(Some(stream_idx));
+                            drop(s);
+                            run_plan();
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    ui.subtitle_soft_radio.connect_toggled({
+        let state = Rc::clone(state);
+        let updating = Rc::clone(&updating);
+        let run_plan = Rc::clone(&run_plan);
+        move |radio| {
+            if updating.get() {
+                return;
+            }
+            if radio.is_active() {
+                let Ok(mut s) = state.try_borrow_mut() else {
+                    return;
+                };
+                if let Some(sel) = s.current_selection_mut() {
+                    if sel.selection.subtitle_mode != cauce_core::SubtitleMode::SoftEmbed {
+                        sel.set_subtitle_mode(cauce_core::SubtitleMode::SoftEmbed);
+                        drop(s);
+                        run_plan();
+                    }
+                }
+            }
+        }
+    });
+
+    ui.subtitle_burn_radio.connect_toggled({
+        let state = Rc::clone(state);
+        let updating = Rc::clone(&updating);
+        let run_plan = Rc::clone(&run_plan);
+        move |radio| {
+            if updating.get() {
+                return;
+            }
+            if radio.is_active() {
+                let Ok(mut s) = state.try_borrow_mut() else {
+                    return;
+                };
+                if let Some(sel) = s.current_selection_mut() {
+                    if sel.selection.subtitle_mode != cauce_core::SubtitleMode::BurnIn {
+                        sel.set_subtitle_mode(cauce_core::SubtitleMode::BurnIn);
+                        drop(s);
+                        run_plan();
+                    }
+                }
+            }
         }
     });
 
@@ -205,9 +352,15 @@ fn presets_handle(
             let labels: Vec<&str> = choices.iter().map(String::as_str).collect();
             ui.preset_combo
                 .set_model(Some(&gtk::StringList::new(&labels)));
-            let first = list.first().map(|preset| preset.id.clone());
+            let first_preset = list.first().cloned();
+            let first = first_preset.as_ref().map(|preset| preset.id.clone());
             *presets.borrow_mut() = list;
-            state.borrow_mut().set_preset(first);
+            let mut s = state.borrow_mut();
+            s.set_preset(first);
+            if let Some(p) = first_preset {
+                s.apply_preset(&p);
+            }
+            drop(s);
             ui.preset_combo
                 .set_selected(u32::try_from(index).unwrap_or(0));
             refresh();
@@ -221,11 +374,14 @@ fn plan_handle(ui: &Ui, client: &Rc<Client>, state: &Rc<RefCell<ConvertState>>) 
     let (ui, client, state) = (ui.clone(), Rc::clone(client), Rc::clone(state));
     Rc::new(move || {
         clear_plan(&ui);
-        let (snapshot, preset_id) = {
+        let (snapshot, preset_id, track_selection, custom_options) = {
             let state = state.borrow();
+            let sel = state.current_selection();
             (
                 state.accepted().first().cloned(),
                 state.preset_id().map(str::to_owned),
+                sel.map(|s| s.selection.clone()),
+                sel.map(|s| s.options.clone()),
             )
         };
         let (Some(snapshot), Some(preset_id)) = (snapshot, preset_id) else {
@@ -233,7 +389,17 @@ fn plan_handle(ui: &Ui, client: &Rc<Client>, state: &Rc<RefCell<ConvertState>>) 
         };
         let (ui, client) = (ui.clone(), Rc::clone(&client));
         glib::spawn_future_local(async move {
-            let params = json!({ "snapshot": snapshot, "preset_id": preset_id });
+            let mut params = json!({ "snapshot": snapshot, "preset_id": preset_id });
+            if let Some(sel) = track_selection {
+                if let Ok(v) = serde_json::to_value(sel) {
+                    params["track_selection"] = v;
+                }
+            }
+            if let Some(opt) = custom_options {
+                if let Ok(v) = serde_json::to_value(opt) {
+                    params["custom_options"] = v;
+                }
+            }
             let Ok(value) = client.call("media.plan", params).await else {
                 return;
             };
@@ -342,11 +508,21 @@ fn queue_handle(
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         glib::spawn_future_local(async move {
             let expected = request.inputs.len();
-            let params = json!({
+            let mut params = json!({
                 "inputs": request.inputs,
                 "output_dir": request.output_dir,
                 "preset_id": request.preset_id,
             });
+            if let Some(sel) = request.track_selection {
+                if let Ok(v) = serde_json::to_value(sel) {
+                    params["track_selection"] = v;
+                }
+            }
+            if let Some(opt) = request.custom_options {
+                if let Ok(v) = serde_json::to_value(opt) {
+                    params["custom_options"] = v;
+                }
+            }
             match client.call("jobs.add", params).await {
                 Ok(value) => {
                     let count = serde_json::from_value::<Vec<Job>>(value)

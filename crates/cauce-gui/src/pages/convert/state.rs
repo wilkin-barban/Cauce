@@ -5,10 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use cauce_core::{
-    Capabilities, ConversionPlan, JobError, MediaSnapshot, StreamAction, SubtitleAction,
+    Capabilities, ConversionPlan, CustomConversionOptions, JobError, MediaSnapshot, Preset,
+    StreamAction, SubtitleAction, TrackSelection,
 };
 
 use crate::i18n::{human_error, t, t_with, technical_details};
+use crate::selection::{FileSelection, SelectionTable};
 
 /// The action that unblocks a machine without FFmpeg (`docs/ui-mvp.md` §9).
 pub const FFMPEG_COMMAND: &str = "sudo apt install ffmpeg";
@@ -31,11 +33,13 @@ pub struct RejectedInput {
 }
 
 /// What one press of "Añadir a la cola" sends to `jobs.add`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueueRequest {
     pub inputs: Vec<String>,
     pub output_dir: String,
     pub preset_id: String,
+    pub track_selection: Option<TrackSelection>,
+    pub custom_options: Option<CustomConversionOptions>,
 }
 
 /// Everything the Convertir page decides, with no GTK types.
@@ -51,6 +55,7 @@ pub struct ConvertState {
     blocking: Option<String>,
     queued: bool,
     confirmation: Option<usize>,
+    selections: SelectionTable,
 }
 
 /// The exact data of the line above the CTA (`docs/ui-mvp.md` §4): how many files
@@ -231,6 +236,7 @@ impl ConvertState {
             .iter()
             .any(|known| known.path == snapshot.path)
         {
+            self.selections.register(&snapshot, None);
             self.accepted.push(snapshot);
         }
     }
@@ -299,6 +305,10 @@ impl ConvertState {
         if !self.can_queue() {
             return None;
         }
+        let (track_selection, custom_options) = match self.current_selection() {
+            Some(sel) => (Some(sel.selection.clone()), Some(sel.options.clone())),
+            None => (None, None),
+        };
         let request = QueueRequest {
             inputs: self
                 .accepted
@@ -307,9 +317,29 @@ impl ConvertState {
                 .collect(),
             output_dir: self.output_dir.clone()?,
             preset_id: self.preset_id.clone()?,
+            track_selection,
+            custom_options,
         };
         self.queued = true;
         Some(request)
+    }
+
+    /// Selection for the first accepted file, if any.
+    pub fn current_selection(&self) -> Option<&FileSelection> {
+        self.accepted
+            .first()
+            .and_then(|snap| self.selections.get(&snap.path))
+    }
+
+    /// Mutable selection for the first accepted file, registered if needed.
+    pub fn current_selection_mut(&mut self) -> Option<&mut FileSelection> {
+        let snapshot = self.accepted.first()?.clone();
+        Some(self.selections.register(&snapshot, None))
+    }
+
+    /// Recomputes defaults for untouched fields when preset changes.
+    pub fn apply_preset(&mut self, preset: &Preset) {
+        self.selections.apply_preset(preset, &self.accepted);
     }
 
     /// Empties the selection after a successful `jobs.add`, keeping folder/preset.
@@ -321,6 +351,7 @@ impl ConvertState {
         self.error_details = None;
         self.queued = false;
         self.confirmation = None;
+        self.selections.clear();
     }
 
     /// Removes one accepted file, the row's own button. Reports the snapshot that
@@ -332,6 +363,7 @@ impl ConvertState {
             .position(|snapshot| snapshot.path == path)?;
         self.queued = false;
         self.confirmation = None;
+        self.selections.remove(path);
         Some(self.accepted.remove(index))
     }
 
