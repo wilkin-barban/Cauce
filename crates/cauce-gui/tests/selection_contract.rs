@@ -299,3 +299,62 @@ fn burn_in_is_refused_for_an_audio_only_preset() {
     assert_eq!(err.path, "/media/film.mkv");
     assert!(err.to_string().contains("/media/film.mkv"));
 }
+
+#[test]
+fn every_file_queues_its_own_selection() {
+    use cauce_gui::pages::convert::state::ConvertState;
+
+    let mut state = ConvertState::new();
+    state.set_output_dir(Some("/tmp/out".to_owned()));
+    state.set_preset(Some("system-smarttv-compat".to_owned()));
+    state.accept_probe(test_snapshot(
+        "/media/first.mkv",
+        vec![audio(1, 6, "spa", true), audio(2, 2, "eng", false)],
+        vec![],
+    ));
+    state.accept_probe(test_snapshot(
+        "/media/second.mkv",
+        vec![audio(1, 2, "eng", true)],
+        vec![],
+    ));
+
+    state
+        .selection_for_mut("/media/first.mkv")
+        .expect("first selection")
+        .selection
+        .audio_track_indices = vec![2];
+    state
+        .selection_for_mut("/media/second.mkv")
+        .expect("second selection");
+
+    let requests = state.take_queue_requests();
+
+    assert_eq!(requests.len(), 2, "one request per file, not one for all");
+    assert!(requests.iter().all(|request| request.inputs.len() == 1));
+    let first = requests
+        .iter()
+        .find(|request| request.inputs[0] == "/media/first.mkv")
+        .expect("request for the first file");
+    assert_eq!(
+        first
+            .track_selection
+            .as_ref()
+            .expect("selection")
+            .audio_track_indices,
+        vec![2],
+        "the first file keeps the track the user chose"
+    );
+    let second = requests
+        .iter()
+        .find(|request| request.inputs[0] == "/media/second.mkv")
+        .expect("request for the second file");
+    assert_ne!(
+        second
+            .track_selection
+            .as_ref()
+            .expect("selection")
+            .audio_track_indices,
+        vec![2],
+        "and the second file must not inherit it"
+    );
+}

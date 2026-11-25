@@ -66,7 +66,7 @@ fn empty_state_cannot_queue() {
     );
     assert!(!state.can_queue(), "sin entradas no hay nada que encolar");
     assert!(
-        state.take_queue_request().is_none(),
+        state.take_queue_requests().is_empty(),
         "un estado vacío nunca produce una petición de cola"
     );
 }
@@ -139,7 +139,7 @@ fn rejected_probes_keep_the_phase_partial() {
 }
 
 #[test]
-fn queue_request_contains_every_accepted_input() {
+fn queue_requests_cover_every_accepted_input() {
     let mut state = ready_state();
     state.add_inputs(vec![
         "/tmp/segundo.mkv".to_owned(),
@@ -148,19 +148,26 @@ fn queue_request_contains_every_accepted_input() {
     state.accept_probe(snapshot("/tmp/segundo.mkv"));
     state.reject("/tmp/roto.wav".to_owned(), "duración ilegible".to_owned());
 
-    let request = state.take_queue_request().expect("listo para encolar");
+    let requests = state.take_queue_requests();
 
+    // One request per file: `jobs.add` takes a single selection for its whole
+    // batch, so a shared request would apply the first file's tracks to the
+    // rest. The rejected input never enters the queue.
+    let paths: Vec<String> = requests
+        .iter()
+        .flat_map(|request| request.inputs.clone())
+        .collect();
     assert_eq!(
-        request.inputs,
+        paths,
         vec!["/tmp/entrada.mp4".to_owned(), "/tmp/segundo.mkv".to_owned()],
-        "la petición lleva todas las entradas aceptadas, en orden"
+        "every accepted input, in order, one request each"
     );
-    assert!(
-        !request.inputs.contains(&"/tmp/roto.wav".to_owned()),
-        "los rechazados nunca entran en la cola"
-    );
-    assert_eq!(request.output_dir, "/home/wilkin/Vídeos");
-    assert_eq!(request.preset_id, "mp4-h264");
+    assert!(requests.iter().all(|request| request.inputs.len() == 1));
+    assert!(!paths.contains(&"/tmp/roto.wav".to_owned()));
+    for request in &requests {
+        assert_eq!(request.output_dir, "/home/wilkin/Vídeos");
+        assert_eq!(request.preset_id, "mp4-h264");
+    }
 }
 
 #[test]
@@ -168,17 +175,19 @@ fn queue_request_is_taken_once() {
     let mut state = ready_state();
 
     assert!(
-        state.take_queue_request().is_some(),
+        !state.take_queue_requests().is_empty(),
         "la primera vez se entrega"
     );
     assert!(
-        state.take_queue_request().is_none(),
+        state.take_queue_requests().is_empty(),
         "sin cambios de estado una segunda llamada no repite el alta"
     );
 
     state.set_preset(Some("mkv-h265".to_owned()));
     let request = state
-        .take_queue_request()
+        .take_queue_requests()
+        .into_iter()
+        .next()
         .expect("un cambio de estado vuelve a habilitar la petición");
     assert_eq!(request.preset_id, "mkv-h265");
 }

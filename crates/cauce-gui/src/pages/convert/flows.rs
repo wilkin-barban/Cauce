@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::{gio, glib, gtk, gtk::gdk};
-use cauce_core::{Capabilities, ConversionPlan, Job, MediaSnapshot, Preset, Settings};
+use cauce_core::{Capabilities, ConversionPlan, Job, JobError, MediaSnapshot, Preset, Settings};
 use libadwaita as adw;
 use serde_json::json;
 
@@ -500,38 +500,52 @@ fn queue_handle(
     let (client, state) = (Rc::clone(client), Rc::clone(state));
     let (refresh, run_plan) = (Rc::clone(refresh), Rc::clone(run_plan));
     Rc::new(move || {
-        let Some(request) = state.borrow_mut().take_queue_request() else {
+        let requests = state.borrow_mut().take_queue_requests();
+        if requests.is_empty() {
             return;
-        };
+        }
         refresh();
         let (client, state) = (Rc::clone(&client), Rc::clone(&state));
         let (refresh, run_plan) = (Rc::clone(&refresh), Rc::clone(&run_plan));
         glib::spawn_future_local(async move {
-            let expected = request.inputs.len();
-            let mut params = json!({
-                "inputs": request.inputs,
-                "output_dir": request.output_dir,
-                "preset_id": request.preset_id,
-            });
-            if let Some(sel) = request.track_selection {
-                if let Ok(v) = serde_json::to_value(sel) {
-                    params["track_selection"] = v;
+            let mut queued = 0usize;
+            let mut first_error: Option<JobError> = None;
+            for request in requests {
+                let mut params = json!({
+                    "inputs": request.inputs,
+                    "output_dir": request.output_dir,
+                    "preset_id": request.preset_id,
+                });
+                if let Some(sel) = request.track_selection {
+                    if let Ok(v) = serde_json::to_value(sel) {
+                        params["track_selection"] = v;
+                    }
+                }
+                if let Some(opt) = request.custom_options {
+                    if let Ok(v) = serde_json::to_value(opt) {
+                        params["custom_options"] = v;
+                    }
+                }
+                match client.call("jobs.add", params).await {
+                    Ok(value) => {
+                        queued += serde_json::from_value::<Vec<Job>>(value)
+                            .map_or(request.inputs.len(), |jobs| jobs.len());
+                    }
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    }
                 }
             }
-            if let Some(opt) = request.custom_options {
-                if let Ok(v) = serde_json::to_value(opt) {
-                    params["custom_options"] = v;
+            {
+                let mut state = state.borrow_mut();
+                state.confirm_queue(queued);
+                if let Some(error) = first_error {
+                    state.set_failure(&error);
                 }
             }
-            match client.call("jobs.add", params).await {
-                Ok(value) => {
-                    let count = serde_json::from_value::<Vec<Job>>(value)
-                        .map_or(expected, |jobs| jobs.len());
-                    state.borrow_mut().confirm_queue(count);
-                    run_plan();
-                }
-                Err(error) => state.borrow_mut().set_failure(&error),
-            }
+            run_plan();
             refresh();
         });
     })

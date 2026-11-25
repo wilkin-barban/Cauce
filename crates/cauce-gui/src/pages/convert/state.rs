@@ -300,40 +300,68 @@ impl ConvertState {
         };
     }
 
-    /// Hands the queue request to the caller exactly once.
-    pub fn take_queue_request(&mut self) -> Option<QueueRequest> {
+    /// Hands one queue request per accepted file, exactly once.
+    ///
+    /// `jobs.add` takes a single `track_selection` for the whole batch, so a
+    /// selection per file can only travel as one call per file. Sending them
+    /// together would silently apply the first file's choices to the rest,
+    /// which is the defect this page had.
+    pub fn take_queue_requests(&mut self) -> Vec<QueueRequest> {
         if !self.can_queue() {
-            return None;
+            return Vec::new();
         }
-        let (track_selection, custom_options) = match self.current_selection() {
-            Some(sel) => (Some(sel.selection.clone()), Some(sel.options.clone())),
-            None => (None, None),
+        let Some(output_dir) = self.output_dir.clone() else {
+            return Vec::new();
         };
-        let request = QueueRequest {
-            inputs: self
-                .accepted
-                .iter()
-                .map(|known| known.path.clone())
-                .collect(),
-            output_dir: self.output_dir.clone()?,
-            preset_id: self.preset_id.clone()?,
-            track_selection,
-            custom_options,
+        let Some(preset_id) = self.preset_id.clone() else {
+            return Vec::new();
         };
+        let requests = self
+            .accepted
+            .iter()
+            .map(|known| {
+                let selection = self.selections.get(&known.path);
+                QueueRequest {
+                    inputs: vec![known.path.clone()],
+                    output_dir: output_dir.clone(),
+                    preset_id: preset_id.clone(),
+                    track_selection: selection.map(|sel| sel.selection.clone()),
+                    custom_options: selection.map(|sel| sel.options.clone()),
+                }
+            })
+            .collect();
         self.queued = true;
-        Some(request)
+        requests
     }
 
-    /// Selection for the first accepted file, if any.
+    /// Selection of the first accepted file.
+    ///
+    /// Kept only while the page still has one global track block; T2 removes the
+    /// block and this shim with it.
     pub fn current_selection(&self) -> Option<&FileSelection> {
         self.accepted
             .first()
             .and_then(|snap| self.selections.get(&snap.path))
     }
 
-    /// Mutable selection for the first accepted file, registered if needed.
+    /// Mutable counterpart of [`ConvertState::current_selection`].
     pub fn current_selection_mut(&mut self) -> Option<&mut FileSelection> {
-        let snapshot = self.accepted.first()?.clone();
+        let path = self.accepted.first()?.path.clone();
+        self.selection_for_mut(&path)
+    }
+
+    /// Selection of `path`, if it is known.
+    pub fn selection_for(&self, path: &str) -> Option<&FileSelection> {
+        self.selections.get(path)
+    }
+
+    /// Mutable selection of `path`, registered with defaults when missing.
+    pub fn selection_for_mut(&mut self, path: &str) -> Option<&mut FileSelection> {
+        let snapshot = self
+            .accepted
+            .iter()
+            .find(|known| known.path == path)?
+            .clone();
         Some(self.selections.register(&snapshot, None))
     }
 
