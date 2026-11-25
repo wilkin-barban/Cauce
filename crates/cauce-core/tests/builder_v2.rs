@@ -274,6 +274,58 @@ fn a_plan_without_an_algorithm_keeps_hable() {
 }
 
 #[test]
+fn a_bitmap_burn_in_uses_the_overlay_composite() {
+    let mut conversion = plan(video(), legacy_audio(), no_subtitles());
+    conversion.subtitle_tracks = vec![SubtitleTrackPlan {
+        source_index: 8,
+        output_index: None,
+        action: SubtitleAction::BurnIn,
+        encoder: Some("overlay".into()),
+        language: Some("spa".into()),
+        title: None,
+        is_default: false,
+    }];
+
+    let argv = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL).expect("must build");
+
+    let graph = arg_of(&argv, "-filter_complex").expect("a bitmap burn-in needs a composite");
+    assert!(
+        graph.contains("[0:s:8]overlay=eof_action=pass"),
+        "the subtitle stream must be the overlay input: {graph}"
+    );
+    assert!(
+        pairs(&argv, "-map").contains(&"[vout]".to_string()),
+        "the composite output is what gets encoded: {argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|arg| arg == "-vf"),
+        "`-vf` and `-filter_complex` cannot share one output: {argv:?}"
+    );
+}
+
+#[test]
+fn a_bitmap_burn_in_refuses_a_video_copy() {
+    let mut video_plan = video();
+    video_plan.action = StreamAction::Copy;
+    video_plan.encoder = None;
+    let mut conversion = plan(video_plan, legacy_audio(), no_subtitles());
+    conversion.subtitle_tracks = vec![SubtitleTrackPlan {
+        source_index: 8,
+        output_index: None,
+        action: SubtitleAction::BurnIn,
+        encoder: Some("overlay".into()),
+        language: None,
+        title: None,
+        is_default: false,
+    }];
+
+    let error = build_ffmpeg_args(INPUT, TEMP, &conversion, &HostFilters::ALL)
+        .expect_err("painting pixels into frames re-encodes the video");
+
+    assert_eq!(error.code, cauce_core::ErrorCode::PlanInvalid);
+}
+
+#[test]
 fn the_filter_chain_runs_scale_then_tonemap_then_subtitles() {
     let mut conversion = plan(video(), legacy_audio(), no_subtitles());
     conversion.subtitle_tracks = vec![SubtitleTrackPlan {

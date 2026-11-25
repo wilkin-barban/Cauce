@@ -140,14 +140,43 @@ pub fn build_ffmpeg_args(
     args.push("-i".into());
     args.push(input.to_string());
 
-    push_video(&mut args, &plan.video, filters)?;
+    // A bitmap track can only be burned in through an overlay composite, and
+    // `-vf` and `-filter_complex` cannot share one output.
+    let overlay = plan
+        .subtitle_tracks
+        .iter()
+        .find(|track| {
+            track.action == SubtitleAction::BurnIn && track.encoder.as_deref() == Some("overlay")
+        })
+        .cloned();
+
+    push_video(&mut args, &plan.video, filters, overlay.is_some())?;
     push_audio(&mut args, &plan.audio, &plan.audio_tracks)?;
     push_subtitles(&mut args, &plan.subtitles, &plan.subtitle_tracks)?;
 
     let chain = video_filter_chain(plan, input, filters)?;
-    if !chain.is_empty() {
-        args.push("-vf".into());
-        args.push(chain);
+    match &overlay {
+        Some(track) => {
+            let index = plan.video.stream_index.ok_or_else(|| {
+                invalid("a burned-in subtitle needs the video stream it is painted over")
+            })?;
+            let prelude = if chain.is_empty() {
+                "null".to_owned()
+            } else {
+                chain.clone()
+            };
+            let graph = format!(
+                "[0:{index}]{prelude}[vpre];[vpre][0:s:{}]overlay=eof_action=pass[vout]",
+                track.source_index
+            );
+            args.extend(["-filter_complex".to_string(), graph]);
+        }
+        None => {
+            if !chain.is_empty() {
+                args.push("-vf".into());
+                args.push(chain);
+            }
+        }
     }
 
     if plan.metadata == MetadataPolicy::Strip {
@@ -318,7 +347,13 @@ fn push_video(
     args: &mut Vec<String>,
     plan: &VideoPlan,
     _filters: &HostFilters,
+    complex_video: bool,
 ) -> Result<(), JobError> {
+    if complex_video && plan.action == StreamAction::Copy {
+        return Err(invalid(
+            "burning in subtitles re-encodes the video; a copy cannot carry a filter graph",
+        ));
+    }
     match plan.action {
         StreamAction::Remove => args.push("-vn".into()),
         StreamAction::Copy => {
@@ -326,14 +361,14 @@ fn push_video(
             args.extend(["-map".to_string(), index, "-c:v".to_string(), "copy".into()]);
         }
         StreamAction::Transcode => {
-            let index = stream_index(plan.stream_index, "video")?;
             let encoder = check_encoder(plan.encoder.as_deref(), &VIDEO_ENCODERS, "video")?;
-            args.extend([
-                "-map".to_string(),
-                index,
-                "-c:v".to_string(),
-                encoder.clone(),
-            ]);
+            if complex_video {
+                args.extend(["-map".to_string(), "[vout]".to_string()]);
+            } else {
+                let index = stream_index(plan.stream_index, "video")?;
+                args.extend(["-map".to_string(), index]);
+            }
+            args.extend(["-c:v".to_string(), encoder.clone()]);
             if let Some(quality) = plan.quality {
                 args.extend(["-crf".to_string(), quality.to_string()]);
             }
@@ -596,8 +631,9 @@ fn video_filter_chain(
         pieces.push(tonemap_chain(algorithm, filters));
     }
     // Burn-in runs last, after tone mapping, so the text keeps its colours.
+    // Bitmap tracks are excluded: the overlay composite owns them.
     for track in &plan.subtitle_tracks {
-        if track.action == SubtitleAction::BurnIn {
+        if track.action == SubtitleAction::BurnIn && track.encoder.as_deref() != Some("overlay") {
             pieces.push(burn_in_filter(input, track)?);
         }
     }
