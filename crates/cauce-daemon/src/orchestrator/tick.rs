@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use cauce_core::{
-    DuplicatePolicy, ErrorCode, Job, JobError, JobState, Progress, Timestamp, build_ffmpeg_args,
-    next_startable, plan_conversion, temp_path, validate_output,
+    ConversionPlan, DuplicatePolicy, ErrorCode, Job, JobError, JobState, MediaSnapshot, Preset,
+    Progress, Timestamp, build_ffmpeg_args, next_startable, plan_conversion, temp_path,
+    validate_output,
 };
 use cauce_ffmpeg::runner::spawn;
 
@@ -250,6 +251,23 @@ fn start_next(daemon: &Daemon, config: &OrchestratorConfig) -> Result<Option<Str
     }
 }
 
+/// The plan a job executes is the one frozen when it was queued
+/// (`docs/contracts.md` §3: a persisted plan is never recomputed).
+///
+/// Recomputing it here silently dropped every phase 1 choice: the argv was
+/// rebuilt from the preset alone, the track list vanished, and a subtitle
+/// transcode ended up in the legacy single-track path with no stream index.
+fn plan_for_execution(
+    persisted: Option<&ConversionPlan>,
+    probe: &MediaSnapshot,
+    preset: &Preset,
+) -> Result<ConversionPlan, JobError> {
+    match persisted {
+        Some(plan) => Ok(plan.clone()),
+        None => plan_conversion(probe, preset),
+    }
+}
+
 /// `queued -> probing`, probe, plan, persist, `probing -> running`, spawn.
 fn start(daemon: &Daemon, config: &OrchestratorConfig, job: &Job) -> Result<(), JobError> {
     let probing = {
@@ -263,7 +281,7 @@ fn start(daemon: &Daemon, config: &OrchestratorConfig, job: &Job) -> Result<(), 
         cauce_ffmpeg::probe::probe_file(&config.toolchain, Path::new(&job.input_path), probed_at)?;
     // System or custom: one resolution path for every job (`docs/contracts.md` §6).
     let preset = daemon.preset(&job.preset_id)?;
-    let plan = plan_conversion(&probe, &preset)?;
+    let plan = plan_for_execution(job.plan.as_ref(), &probe, &preset)?;
     let temp = temp_path(&job.output_path, &job.id)?;
     let args = build_ffmpeg_args(&job.input_path, &temp, &plan, &config.host_filters)?;
 
@@ -374,4 +392,79 @@ fn policy_name(policy: DuplicatePolicy) -> &'static str {
 
 fn utc_now() -> Result<Timestamp, JobError> {
     cauce_jobs::migrations::utc_now()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plan_for_execution;
+    use cauce_core::{
+        AudioMixMode, MediaSnapshot, StreamAction, SubtitleMode, Timestamp, TrackSelection,
+        plan_conversion, plan_conversion_with, system_presets,
+    };
+
+    #[rustfmt::skip]
+    fn snapshot() -> MediaSnapshot {
+        use cauce_core::{AudioStream, VideoStream};
+        MediaSnapshot {
+            path: "/media/oak.mkv".into(),
+            container: "mkv".into(),
+            duration_ms: 60_000,
+            size_bytes: 1024,
+            bitrate_bps: 8_000_000,
+            video_streams: vec![VideoStream {
+                index: 0, codec: "hevc".into(), profile: None, level: None,
+                width: 3840, height: 1606, fps: 23.976, pixel_format: "yuv420p10le".into(),
+                bit_depth: 10, is_hdr: true, bitrate_bps: None, language: None,
+            }],
+            audio_streams: vec![AudioStream {
+                index: 2, codec: "eac3".into(), channels: 6, sample_rate: 48_000,
+                bitrate_bps: Some(960_000), language: Some("spa".into()), is_default: false,
+            }],
+            subtitle_streams: Vec::new(),
+            probed_at: Timestamp::parse("2026-11-24T10:00:00Z").expect("stamp"),
+        }
+    }
+
+    fn preset() -> &'static cauce_core::Preset {
+        system_presets()
+            .iter()
+            .find(|preset| preset.id == "system-smarttv-compat")
+            .expect("preset")
+    }
+
+    #[test]
+    fn the_frozen_plan_is_the_one_the_job_executes() {
+        // The regression: recomputing the plan at start dropped every phase 1
+        // choice and rebuilt the argv from the preset alone.
+        let source = snapshot();
+        let selection = TrackSelection {
+            audio_track_indices: vec![2],
+            subtitle_track_index: None,
+            subtitle_mode: SubtitleMode::Strip,
+            audio_mix_mode: AudioMixMode::DualTrackUniversal,
+        };
+        let frozen =
+            plan_conversion_with(&source, preset(), Some(&selection), None).expect("frozen plan");
+        assert_eq!(frozen.audio_tracks.len(), 2, "the fixture plans two tracks");
+
+        let executed = plan_for_execution(Some(&frozen), &source, preset()).expect("executed plan");
+
+        assert_eq!(executed, frozen, "the executor must not re-plan");
+        assert_ne!(
+            executed,
+            plan_conversion(&source, preset()).expect("legacy plan"),
+            "and that matters because the preset alone cannot produce it"
+        );
+        assert_eq!(executed.audio_tracks[1].action, StreamAction::Transcode);
+    }
+
+    #[test]
+    fn a_job_without_a_frozen_plan_still_gets_one() {
+        let source = snapshot();
+        let executed = plan_for_execution(None, &source, preset()).expect("plan");
+        assert_eq!(
+            executed,
+            plan_conversion(&source, preset()).expect("legacy plan")
+        );
+    }
 }

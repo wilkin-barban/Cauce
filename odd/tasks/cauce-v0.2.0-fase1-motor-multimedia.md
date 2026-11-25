@@ -372,3 +372,10 @@ Decisiones registradas:
 2. El resumen del plan se arma con `plan_selection_summary` sobre la misma selección que viaja en el `QueueRequest`, no con una frase paralela. Si divergiera, la UI mentiría sobre lo que va a convertir.
 3. `QueueRequest` lleva `track_selection` y `custom_options` opcionales; `plan_handle` y `queue_handle` los reenvían. Un control que no llega al request es decoración.
 4. El writer dejó en rojo `clippy --all-targets` por un `&t(...)` en un test propio. Lo corregí yo: la puerta del CI es `--all-targets -D warnings`, no `--lib --bins`, y verificarse con la mitad de la puerta no es verificarse.
+
+**L19** — **La conversión real del benchmark destapó un defecto que ninguna prueba unitaria cubría.**
+Síntoma: el plan persistido era correcto (doble pista AAC+AC-3, español, `mov_text`, 1080p) pero el trabajo fallaba en 20 s con `PLAN_INVALID: a subtitle stream that is kept must declare its stream_index`.
+Causa: `start()` en `orchestrator/tick.rs` **recalculaba el plan** con `plan_conversion(&probe, &preset)` al arrancar, ignorando la selección que `jobs.add` había congelado y sobrescribiéndola con `set_probe_and_plan`. Todo lo que T1–T7 construyeron se descartaba en el último metro: la elección de pista, el modo de mezcla y los subtítulos.
+Arreglo: `plan_for_execution(persisted, probe, preset)` usa el plan congelado y solo recalcula cuando la fila no tiene ninguno. Dos tests unitarios lo fijan, incluido el contraste contra `plan_conversion` para probar que el plan legacy **no** puede producir el correcto.
+Lección: siete tareas con 429 pruebas verdes y el motor no convertía ni un archivo real. El end-to-end no es ceremonia; es la única prueba que ejerce el cableado entre piezas que individualmente funcionan.
+**Hallazgo de infraestructura:** `crates/cauce-ffmpeg/tests/toolchain.rs` era intermitente (1 de cada 3 corridas) porque dos tests compartían el mismo directorio temporal y se borraban los binarios falsos entre sí. Se agregó un contador atómico al nombre del directorio; 5 corridas consecutivas verdes. Un test intermitente en la puerta de calidad es una puerta que no cierra.
