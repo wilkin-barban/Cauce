@@ -15,7 +15,7 @@ use std::path::Path;
 
 use crate::error::{ErrorCode, JobError};
 use crate::media::MediaSnapshot;
-use crate::plan::{ConversionPlan, StreamAction, SubtitleAction};
+use crate::plan::{AudioTrackPlan, ConversionPlan, StreamAction, SubtitleAction};
 use crate::settings::DuplicatePolicy;
 
 /// Minimum duration tolerance, in milliseconds (`architecture.md` §12).
@@ -213,17 +213,35 @@ pub fn validate_output(
         }
     }
 
-    if matches!(
-        plan.audio.action,
-        StreamAction::Transcode | StreamAction::Copy
-    ) {
-        let expected = expected_audio_codec(plan, source);
-        if let Some(expected) = expected {
-            for stream in &output.audio_streams {
+    if plan.audio_tracks.is_empty() {
+        if matches!(
+            plan.audio.action,
+            StreamAction::Transcode | StreamAction::Copy
+        ) {
+            let expected = expected_audio_codec(plan, source);
+            if let Some(expected) = expected {
+                for stream in &output.audio_streams {
+                    if !same_codec(expected, &stream.codec) {
+                        return Err(failed(format!(
+                            "El códec de audio de la salida es `{}` y `{expected}` era el esperado.",
+                            stream.codec
+                        )));
+                    }
+                }
+            }
+        }
+    } else {
+        // A plan that names its tracks has one expectation per track: the stereo
+        // default is AAC and the companion is AC-3, so a single expected codec
+        // would reject a perfectly valid dual-track output.
+        for (track, stream) in plan.audio_tracks.iter().zip(&output.audio_streams) {
+            let expected = expected_track_codec(track, source);
+            if let Some(expected) = expected {
                 if !same_codec(expected, &stream.codec) {
                     return Err(failed(format!(
-                        "El códec de audio de la salida es `{}` y `{expected}` era el esperado.",
-                        stream.codec
+                        "El códec de audio de la pista {} de la salida es `{}` y `{expected}` \
+                         era el esperado.",
+                        track.output_index, stream.codec
                     )));
                 }
             }
@@ -302,6 +320,9 @@ fn expected_video_tracks(plan: &ConversionPlan) -> usize {
 }
 
 fn expected_audio_tracks(plan: &ConversionPlan) -> usize {
+    if !plan.audio_tracks.is_empty() {
+        return plan.audio_tracks.len();
+    }
     if plan.audio.action == StreamAction::Remove {
         0
     } else {
@@ -309,7 +330,32 @@ fn expected_audio_tracks(plan: &ConversionPlan) -> usize {
     }
 }
 
+/// Codec one named track must carry: the encoder's family when it re-encodes,
+/// the matching source stream when it copies.
+fn expected_track_codec<'a>(
+    track: &'a AudioTrackPlan,
+    source: &'a MediaSnapshot,
+) -> Option<&'a str> {
+    match track.action {
+        StreamAction::Remove => None,
+        StreamAction::Transcode => track.encoder.as_deref().and_then(audio_codec_for_encoder),
+        StreamAction::Copy => source
+            .audio_streams
+            .iter()
+            .find(|stream| stream.index == track.source_index)
+            .map(|stream| stream.codec.as_str()),
+    }
+}
+
 fn expected_subtitle_tracks(plan: &ConversionPlan) -> usize {
+    if !plan.subtitle_tracks.is_empty() {
+        // A burned-in track is pixels: it occupies no subtitle stream.
+        return plan
+            .subtitle_tracks
+            .iter()
+            .filter(|track| track.action != SubtitleAction::BurnIn)
+            .count();
+    }
     match plan.subtitles.action {
         SubtitleAction::Remove | SubtitleAction::BurnIn => 0,
         SubtitleAction::Copy | SubtitleAction::Transcode => 1,
@@ -374,6 +420,7 @@ fn audio_codec_for_encoder(encoder: &str) -> Option<&'static str> {
         "flac" => "flac",
         "alac" => "alac",
         "pcm_s16le" => "pcm_s16le",
+        "ac3" => "ac3",
         _ => return None,
     })
 }

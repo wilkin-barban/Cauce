@@ -6,9 +6,9 @@
 //! validator is tested in isolation from `plan_conversion` and `parse_ffprobe`.
 
 use cauce_core::{
-    AudioPlan, AudioStream, ConversionPlan, ErrorCode, HdrAction, JobError, MediaSnapshot,
-    MetadataPolicy, StreamAction, SubtitleAction, SubtitleKind, SubtitlePlan, SubtitleStream,
-    Timestamp, VideoPlan, VideoStream, validate_output,
+    AudioPlan, AudioStream, AudioTrackPlan, ConversionPlan, ErrorCode, HdrAction, JobError,
+    MediaSnapshot, MetadataPolicy, StreamAction, SubtitleAction, SubtitleKind, SubtitlePlan,
+    SubtitleStream, Timestamp, VideoPlan, VideoStream, validate_output,
 };
 
 const SOURCE: &str = "/home/wilkin/Vídeos/holiday.mp4";
@@ -22,6 +22,7 @@ fn video_plan(action: StreamAction, encoder: Option<&str>, max: Option<(u32, u32
         max_width: max.map(|size| size.0), max_height: max.map(|size| size.1),
         fps: None, pixel_format: None, profile: None, level: None,
         hdr_action: HdrAction::Preserve, stream_index: Some(0),
+        tone_mapping: None,
     }
 }
 
@@ -327,4 +328,89 @@ fn validate_output_checks_the_codec_of_every_audio_track() {
     let error = validate_output(&valid_transcode(), &source(), &output)
         .expect_err("the second audio track has an unexpected opus codec");
     assert_rule(&error, "opus");
+}
+
+// ---------------------------------------------------------------------------
+// Dual track (T4): the expectation is per track, not one codec for all
+// ---------------------------------------------------------------------------
+
+/// The Oak Street shape: AAC stereo as default, AC-3 5.1 as companion.
+fn dual_track_plan() -> ConversionPlan {
+    let mut plan = plan(
+        video_plan(StreamAction::Transcode, Some("libx264"), None),
+        audio_plan(StreamAction::Transcode, Some("aac")),
+        subtitle_plan(SubtitleAction::Remove),
+    );
+    plan.audio_tracks = vec![
+        AudioTrackPlan {
+            source_index: 1,
+            output_index: 0,
+            action: StreamAction::Transcode,
+            encoder: Some("aac".into()),
+            bitrate: Some("192k".into()),
+            channels: 2,
+            filter: None,
+            language: Some("spa".into()),
+            title: None,
+            is_default: true,
+        },
+        AudioTrackPlan {
+            source_index: 1,
+            output_index: 1,
+            action: StreamAction::Transcode,
+            encoder: Some("ac3".into()),
+            bitrate: Some("448k".into()),
+            channels: 6,
+            filter: None,
+            language: Some("spa".into()),
+            title: None,
+            is_default: false,
+        },
+    ];
+    plan
+}
+
+fn output_with_audio(codecs: &[&str]) -> MediaSnapshot {
+    snapshot(
+        "/home/wilkin/Vídeos/convertidos/oak.mp4",
+        60_000,
+        42_000_000,
+        vec![video_stream(0, "h264", 1920, 1080)],
+        codecs
+            .iter()
+            .enumerate()
+            .map(|(offset, codec)| audio_stream(1 + offset as u32, codec))
+            .collect(),
+        Vec::new(),
+    )
+}
+
+#[test]
+fn validate_output_accepts_a_dual_track_output() {
+    let input = source();
+    let plan = dual_track_plan();
+    let output = output_with_audio(&["aac", "ac3"]);
+
+    assert_eq!(
+        validate_output(&plan, &input, &output),
+        Ok(()),
+        "a stereo default with a 5.1 companion is a valid output"
+    );
+}
+
+#[test]
+fn validate_output_rejects_a_companion_with_the_wrong_codec() {
+    let input = source();
+    let plan = dual_track_plan();
+    let output = output_with_audio(&["aac", "opus"]);
+
+    let error = validate_output(&plan, &input, &output)
+        .expect_err("the companion must be AC-3, not whatever came out");
+
+    assert_eq!(error.code, ErrorCode::OutputValidationFailed);
+    assert!(
+        error.message.contains("ac3"),
+        "the error must name the expected codec: {}",
+        error.message
+    );
 }
