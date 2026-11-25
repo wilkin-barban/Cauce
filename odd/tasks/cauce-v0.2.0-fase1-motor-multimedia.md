@@ -411,3 +411,8 @@ A diferencia de los tres intentos anteriores —que morían en el modelo con el 
 El propio proveedor indica la única salida: **revisar en una cadena de candidatos más chicos**, cada uno bajo el presupuesto, no truncar la evidencia.
 Cortes naturales disponibles, en orden histórico: T1+T2 (contrato y plan v2), T3+T4 (motor acústico y builder), T5 (subtítulos), T6 (planner), T7 (IPC), T8+T9 (GUI), y el arreglo de `max_fps` + preparación de release.
 Esto convierte la "review de la fase" en siete u ocho reviews encadenadas contra un proveedor que además falla por timeout en el modelo. Es una decisión de costo del humano, no una que corresponda tomar por la ventana.
+
+**L24** — Definiciones finales del Tech Lead para cerrar la fase:
+1. **Review nativa: aprobada por escrito.** No se intenta la cadena de reviews contra un relay caído. La evidencia aceptada es local: 70 binarios, 431 pruebas verdes, `fmt` y `clippy` limpios, y el `.deb` instalado y probado en el host. Esto es una decisión humana y se registra como tal; **no es un recibo del proveedor** y la lineage `review-aa10b9c82745f0c1` quedó sin autoridad creada.
+2. **La conversión completa de 22.6 GB no se repite.** La evidencia acústica ya obtenida sobre el archivo real (−22.2 LUFS integrados) satisface `G2`. El host no se satura por una corrida de horas que no agregaría información sobre la métrica que importa.
+3. **El pico de 0.0 dB queda explicado y cerrado:** con `alimiter=limit=0.98` el PCM lineal está limitado a −0.17 dBFS sin distorsión, y el valor observado es *inter-sample peak overshoot* al decodificar AAC de 255 kbps, no clipping previo. La métrica de `G2` es el loudness integrado, que pasa.

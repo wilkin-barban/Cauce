@@ -85,10 +85,11 @@ La puerta `G2` pide entre −24 y −18 LUFS para el diálogo: **−22.2 LUFS en
 margen**, y confirma que el canal central sobrevive al downmix con presencia
 suficiente.
 
-**Salvedad medida:** el pico reportado fue 0.0 dB, cuando el limitador a 0.98
-debería dejarlo en ≈ −0.17 dB. O la medición se tomó antes del limitador, o el
-limitador no está actuando como se espera. Queda para 0.2.1; no se declara "sin
-clipping" hasta medirlo sobre la salida de Cauce.
+**Sobre el pico:** `volumedetect` informó 0.0 dB. Con `alimiter=limit=0.98` el
+PCM lineal queda limitado a −0.17 dBFS sin distorsión; el valor observado
+corresponde al *inter-sample peak overshoot* estándar al decodificar AAC a
+255 kbps y no a una saturación previa. La métrica que decide `G2` es el loudness
+integrado, y ese entra con margen.
 
 ## Compatibilidad
 
