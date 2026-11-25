@@ -47,6 +47,8 @@ Representa el resultado de `ffprobe` para un archivo:
 | `faststart` | boolean | Solo aplica a MP4/M4A |
 | `metadata` | `preserve`/`strip` | Política explícita |
 | `reasoning` | string[] | Explica copy/transcode para la UI |
+| `audio_tracks` | `AudioTrackPlan[]` | Opcional. Vacío en un plan escrito por 0.1.x; se omite del JSON cuando está vacío |
+| `subtitle_tracks` | `SubtitleTrackPlan[]` | Opcional. Una pista incrustada vive aquí sin `output_index` |
 
 `VideoPlan`: `action` (`copy`/`transcode`/`remove`), `encoder?`, `quality?`, `max_width?`, `max_height?`, `fps?`, `pixel_format?`, `profile?`, `level?`, `hdr_action` (`preserve`/`tone_map_sdr`), `stream_index?`.
 
@@ -55,6 +57,11 @@ Representa el resultado de `ffprobe` para un archivo:
 `filter?` es un enumerado cerrado, nunca texto libre: `stereo_dialogue_boost` pide la matriz de downmix con realce del canal central que corrige el «audio mudo» de v0.1 ([`architecture-phases-0-and-1.md`](architecture-phases-0-and-1.md) §2 BUG-001). Se omite del JSON cuando no hay filtro, así que un plan persistido por v0.1 se sigue leyendo byte a byte igual.
 
 `SubtitlePlan`: `action` (`copy`/`transcode`/`remove`/`burn_in`), `encoder?`, `stream_index?`, `source_index?`.
+
+`AudioTrackPlan`: `source_index`, `output_index`, `action`, `encoder?`, `bitrate?`, `channels`, `filter?`, `language?`, `title?`, `is_default`. `SubtitleTrackPlan`: igual pero `output_index?` (
+`null` para una pista incrustada) y `action` con los valores de `SubtitlePlan`.
+
+Un plan que no declara pistas se lee con `primary_audio()` / `primary_subtitles()`, que derivan la vista de un solo stream a partir de los campos `audio` y `subtitles`. Esa vista es la que mantiene funcionando los planes persistidos por 0.1.x sin migración de datos.
 
 #### Selección de pistas y opciones personalizadas (v0.2)
 

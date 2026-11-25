@@ -86,6 +86,8 @@ fn plan(video: VideoPlan, audio: AudioPlan) -> ConversionPlan {
         faststart: false,
         metadata: MetadataPolicy::Preserve,
         reasoning: Vec::new(),
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
     }
 }
 

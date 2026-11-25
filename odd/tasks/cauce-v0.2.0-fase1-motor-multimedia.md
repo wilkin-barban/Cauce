@@ -268,3 +268,12 @@ Decisiones menores registradas:
 1. `TrackSelection` valida en el borde vía `#[serde(try_from)]`: lista vacía solo con `Passthrough`, sin duplicados, con tope de cuatro pistas. Es el patrón que el crate ya usa para `percent`, `priority` y `max_concurrent_jobs`.
 2. `ToneMappingOption` expone `ffmpeg_name()` para que la cadena de filtros no repita el mapeo en cada llamador.
 3. `AudioTrackPlan.filter` usa el enum cerrado `AudioFilter` de Fase 0, no el `Option<String>` del borrador de arquitectura: sigue prohibido emitir texto de filtro libre.
+
+**L7** — T2 (`feat(core): carry audio and subtitle track lists in the plan`) ejecutada.
+RED: `cargo test -p cauce-core --test selection_contracts` → `error[E0063]: missing fields audio_tracks and subtitle_tracks in initializer of ConversionPlan` en 8 archivos; más `a_phase_0_plan_json_still_deserializes_and_exposes_a_primary_audio` sin compilar.
+GREEN: 14 tests en `selection_contracts`, `plan_contracts` intacto, suite completa en verde.
+Decisiones registradas:
+1. Los campos nuevos llevan `#[serde(default, skip_serializing_if = "Vec::is_empty")]`. El `skip` no es cosmético: sin él, un plan de 0.1.1 se serializa con dos arrays vacíos y el dórico de `plan_contracts` cambia, o sea que el "se sigue leyendo byte a byte igual" deja de ser cierto en la dirección de salida.
+2. `primary_audio()` / `primary_subtitles()` derivan la pista primaria de los campos legacy cuando no hay lista, y prefieren la lista cuando existe. La lógica de "cuál es la principal" queda en un solo lugar, no repartida entre el builder, el validador y la UI.
+3. `primary_subtitles()` devuelve `None` para `Remove` **y** para `BurnIn`: una pista incrustada no es un stream y no debe aparecer donde se esperan streams.
+Costo aceptado: el campo nuevo obligó a tocar 7 literales de `ConversionPlan` en tests. Es el mismo ripple que `AudioPlan.filter` en Fase 0 y no hay forma de evitarlo sin `Default` parcial, que en Rust no existe.

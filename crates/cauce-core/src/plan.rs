@@ -17,6 +17,65 @@ pub struct ConversionPlan {
     pub metadata: MetadataPolicy,
     /// Human-readable explanation of every copy/transcode decision.
     pub reasoning: Vec<String>,
+    /// Every audio track of the output, in output order.
+    ///
+    /// Empty in a plan written by 0.1.x, which only had the single-track
+    /// `audio` view; [`ConversionPlan::primary_audio`] covers that case.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_tracks: Vec<AudioTrackPlan>,
+    /// Every subtitle track of the output; a burned-in track lives here with no
+    /// output index. Empty in a plan written by 0.1.x.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtitle_tracks: Vec<SubtitleTrackPlan>,
+}
+
+impl ConversionPlan {
+    /// The track the legacy single-track fields describe, if the plan keeps one.
+    ///
+    /// Phase 0 plans carry no track list, so the view is derived from `audio`;
+    /// phase 1 plans carry both and the list wins.
+    pub fn primary_audio(&self) -> Option<AudioTrackPlan> {
+        if let Some(track) = self.audio_tracks.first() {
+            return Some(track.clone());
+        }
+        if self.audio.action == StreamAction::Remove {
+            return None;
+        }
+        Some(AudioTrackPlan {
+            source_index: self.audio.stream_index?,
+            output_index: 0,
+            action: self.audio.action,
+            encoder: self.audio.encoder.clone(),
+            bitrate: self.audio.bitrate.clone(),
+            channels: self.audio.channels.unwrap_or(0),
+            filter: self.audio.filter,
+            language: None,
+            title: None,
+            is_default: true,
+        })
+    }
+
+    /// Same as [`ConversionPlan::primary_audio`] for subtitles.
+    pub fn primary_subtitles(&self) -> Option<SubtitleTrackPlan> {
+        if let Some(track) = self.subtitle_tracks.first() {
+            return Some(track.clone());
+        }
+        match self.subtitles.action {
+            SubtitleAction::Remove | SubtitleAction::BurnIn => None,
+            SubtitleAction::Copy | SubtitleAction::Transcode => Some(SubtitleTrackPlan {
+                source_index: self
+                    .subtitles
+                    .source_index
+                    .or(self.subtitles.stream_index)?,
+                output_index: Some(0),
+                action: self.subtitles.action,
+                encoder: self.subtitles.encoder.clone(),
+                language: None,
+                title: None,
+                is_default: true,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -5,9 +5,9 @@
 //! silently keep working in Rust and break the wire contract.
 
 use cauce_core::plan::{
-    AudioFilter, AudioMixMode, AudioTrackPlan, CustomConversionOptions, ResolutionTarget,
-    StreamAction, SubtitleAction, SubtitleMode, SubtitleTrackPlan, ToneMappingOption,
-    TrackSelection,
+    AudioFilter, AudioMixMode, AudioTrackPlan, ConversionPlan, CustomConversionOptions,
+    ResolutionTarget, StreamAction, SubtitleAction, SubtitleMode, SubtitleTrackPlan,
+    ToneMappingOption, TrackSelection,
 };
 
 // ---------------------------------------------------------------------------
@@ -235,4 +235,97 @@ fn tone_mapping_option_offers_the_three_documented_algorithms() {
             serde_json::from_str(&payload).expect("every documented algorithm must parse");
         assert_eq!(options.tone_mapping, expected);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The plan still reads what 0.1.x wrote (T2)
+// ---------------------------------------------------------------------------
+
+/// A plan written by 0.1.1: no track lists, single-track views only.
+const PHASE_0_PLAN: &str = r#"{
+  "container": "mp4",
+  "video": {
+    "action": "transcode", "encoder": "libx264", "quality": 23,
+    "max_width": 1920, "max_height": 1080, "fps": null,
+    "pixel_format": "yuv420p", "profile": "high", "level": null,
+    "hdr_action": "tone_map_sdr", "stream_index": 0
+  },
+  "audio": {
+    "action": "transcode", "encoder": "aac", "bitrate": "192k",
+    "channels": 2, "stream_index": 1, "normalize": false,
+    "filter": "stereo_dialogue_boost"
+  },
+  "subtitles": {
+    "action": "remove", "encoder": null, "stream_index": null, "source_index": null
+  },
+  "faststart": true,
+  "metadata": "preserve",
+  "reasoning": ["fixture written by 0.1.1"]
+}"#;
+
+#[test]
+fn a_phase_0_plan_json_still_deserializes_and_exposes_a_primary_audio() {
+    let plan: ConversionPlan =
+        serde_json::from_str(PHASE_0_PLAN).expect("a 0.1.1 plan must keep deserializing");
+
+    assert!(
+        plan.audio_tracks.is_empty(),
+        "old plans carry no track list"
+    );
+    assert!(plan.subtitle_tracks.is_empty());
+
+    let primary = plan
+        .primary_audio()
+        .expect("the legacy field is the primary");
+    assert_eq!(primary.source_index, 1);
+    assert_eq!(primary.output_index, 0);
+    assert_eq!(primary.channels, 2);
+    assert_eq!(primary.filter, Some(AudioFilter::StereoDialogueBoost));
+
+    assert_eq!(plan.primary_subtitles(), None);
+}
+
+#[test]
+fn a_plan_with_two_audio_tracks_round_trips_and_names_the_primary() {
+    let mut plan: ConversionPlan = serde_json::from_str(PHASE_0_PLAN).expect("fixture");
+    plan.audio_tracks = vec![
+        AudioTrackPlan {
+            source_index: 2,
+            output_index: 0,
+            action: StreamAction::Transcode,
+            encoder: Some("aac".into()),
+            bitrate: Some("192k".into()),
+            channels: 2,
+            filter: Some(AudioFilter::StereoDialogueBoost),
+            language: Some("spa".into()),
+            title: Some("Español Latino (Estéreo Voz Realzada)".into()),
+            is_default: true,
+        },
+        AudioTrackPlan {
+            source_index: 2,
+            output_index: 1,
+            action: StreamAction::Transcode,
+            encoder: Some("ac3".into()),
+            bitrate: Some("448k".into()),
+            channels: 6,
+            filter: None,
+            language: Some("spa".into()),
+            title: Some("Español Latino (Dolby Digital 5.1)".into()),
+            is_default: false,
+        },
+    ];
+
+    let encoded = serde_json::to_string(&plan).expect("must serialize");
+    let decoded: ConversionPlan = serde_json::from_str(&encoded).expect("must deserialize");
+
+    assert_eq!(decoded.audio_tracks.len(), 2);
+    assert_eq!(decoded.primary_audio().expect("primary").output_index, 0);
+    assert_eq!(
+        decoded.audio_tracks[1].channels, 6,
+        "the surround companion survives the round trip"
+    );
+    assert!(
+        !decoded.audio_tracks[1].is_default,
+        "only one track is the default"
+    );
 }

@@ -152,6 +152,8 @@ fn plan() -> ConversionPlan {
             "video: copy — h264 compatible con mp4".to_owned(),
             "subtítulos: remove — la entrada no declara pistas".to_owned(),
         ],
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
     }
 }
 

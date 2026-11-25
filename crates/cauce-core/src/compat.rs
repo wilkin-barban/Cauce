@@ -57,6 +57,8 @@ pub fn plan_conversion(
             MetadataPolicy::Strip
         },
         reasoning,
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
     })
 }
 

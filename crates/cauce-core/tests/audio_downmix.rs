@@ -52,6 +52,8 @@ fn plan(audio: AudioPlan) -> ConversionPlan {
         faststart: false,
         metadata: MetadataPolicy::Preserve,
         reasoning: vec!["fixture plan built by hand".into()],
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
     }
 }
 

@@ -84,6 +84,8 @@ fn conversion_plan_round_trips_and_keeps_reasoning() {
             ),
             String::from("audio: aac keeps 2 channels at 192k"),
         ],
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
     };
 
     common::round_trip(&plan, PLAN_JSON);
