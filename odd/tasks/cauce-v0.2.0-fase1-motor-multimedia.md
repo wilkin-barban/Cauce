@@ -344,3 +344,12 @@ Decisiones registradas:
 2. `media.plan` y `jobs.add` llaman a `plan_conversion_with`. La persistencia no necesitó cambios: `plan_json` guarda el plan serializado y los campos nuevos viajan solos, omitiéndose cuando están vacíos.
 3. Un índice inexistente devuelve `PLAN_INVALID` desde el planner, no desde el parser: el índice es sintácticamente válido, lo que no existe es la pista.
 4. El test de persistencia crea la carpeta de salida antes de encolar: `jobs.add` autoriza la ruta y falla si no existe, que es el comportamiento correcto y no un defecto.
+
+**L16** — T8 (`feat(gui): track per-file selection state`) ejecutada por un writer delegado.
+RED y GREEN reportados por el writer; verificado por el padre: 7 tests en `selection_contract`, `cargo test --workspace` en verde.
+Decisiones registradas:
+1. El estado vive en un módulo propio (`crates/cauce-gui/src/selection.rs`), no dentro de la página. Permite testear la lógica sin GTK y deja el commit separado del de los widgets.
+2. Los defaults salen del probe: pista por defecto, `StereoDialogueBoost` sólo si la pista elegida tiene 6 o más canales, `SoftEmbed` sólo si hay subtítulos. Un default que no mira el archivo es una promesa vacía.
+3. Cambiar el preset recalcula **sólo** los campos que el usuario no tocó, con un registro por campo. Sin eso, elegir español y cambiar de preset borraba la elección en silencio.
+4. La validación previa a encolar nombra la ruta del archivo culpable: un error de cola sin archivo es un error que el usuario no puede accionar.
+**Nota de proceso:** el writer se trabó a los 91 turnos con un timeout del modelo, ya con T8 entregada y sin haber empezado T9. Se canceló en vez de continuarlo con estado incierto; T8 se verificó y commiteó aparte.
